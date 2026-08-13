@@ -71,12 +71,20 @@ forza far girare `farsight-agent`: utile per integrare un programma esistente ch
 mandare i propri dati senza un processo esterno.
 
 - `farsight/<tenant_id>/<device_id>/telemetry` — JSON, schema in
-  [`internal/telemetry/telemetry.go`](../internal/telemetry/telemetry.go) (`Payload`): campi
-  stabili, usati anche come tag/field InfluxDB, da tenere sincronizzati se si aggiunge un
-  publisher alternativo.
+  [`internal/telemetry/telemetry.go`](../internal/telemetry/telemetry.go) (`Payload`). Solo
+  `ts`/`tenant_id`/`device_id` sono obbligatori lato Telegraf (`optional = true` su tutto il
+  resto — vedi `packaging/server/usr/lib/farsight/server-netconfig.sh`); un publisher può
+  mandarne un sottoinsieme qualsiasi.
 - `farsight/<tenant_id>/<device_id>/status` — retained, `online`/`offline` (nell'agent è
   guidato dal Last Will MQTT: se il processo muore senza disconnessione pulita, il broker
   stesso marca la macchina offline).
+- **Metriche custom**: campo `metrics` (oggetto JSON libero, `{"nome": valore, ...}`) dentro
+  lo stesso payload di telemetria — per dati specifici dell'applicazione che non sono CPU/RAM/
+  disco (es. numero pazienti visitati, letture sensori). Telegraf lo scompone automaticamente:
+  ogni chiave diventa un campo InfluxDB a sé, **senza toccare nessuna config server** per
+  aggiungerne una nuova. Il nome della chiave è quello che finisce in InfluxDB/Grafana — va
+  scelto con cura, non c'è validazione. `tenant_id`/`device_id` restano gli unici identificatori
+  richiesti: non serve un terzo ID per "che tipo di dato è", basta il nome della metrica.
 
 **Da CLI**, con `mosquitto_pub` (pacchetto `mosquitto-clients`):
 
@@ -88,18 +96,20 @@ mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/telemet
 ```
 
 **Da C**, con l'SDK in [`sdk/c/`](../sdk/c/) — wrapper minimo sopra Eclipse Paho MQTT C
-(`libpaho-mqtt-dev` su Ubuntu) che nasconde MQTT dietro tre funzioni: nessun dettaglio del
-protocollo da gestire nel programma che integra Farsight.
+(`libpaho-mqtt-dev` su Ubuntu) che nasconde MQTT dietro poche funzioni con nomi propri, incluse
+metriche custom e lettura automatica di tenant/device da `client.conf` (dettagli nel
+[README dell'SDK](../sdk/c/README.md)):
 
 ```c
 /* cc example.c farsight.c -o farsight-example -lpaho-mqtt3c */
 #include "farsight.h"
 
 int main(void) {
-    farsight_client *c = farsight_connect("tcp://100.x.x.x:1883", "default", "my-device");
+    farsight_client *c = farsight_connect_from_config(NULL); /* legge client.conf */
     if (!c) return 1;
 
     farsight_publish_telemetry(c, 12.5 /* cpu% */, 40.2 /* mem% */, 55.0 /* disk% */);
+    farsight_publish_metric(c, "patients_visited", 7); /* metrica custom, qualunque nome */
 
     farsight_disconnect(c); /* pubblica anche status=offline, pulito */
     return 0;

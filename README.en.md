@@ -55,6 +55,20 @@ systemctl restart farsight-agent farsight-x11vnc farsight-vnc-proxy
 
 Both reachable only from inside the Tailscale network.
 
+## Quick command-line test
+
+Data travels over MQTT: two commands (`mosquitto-clients`) are enough to make a machine show
+up in the dashboard without installing anything — handy for scripting too:
+
+```bash
+mosquitto_pub -h <server-tailscale-ip> -t 'farsight/default/test/status' -r -q 1 -m 'online'
+mosquitto_pub -h <server-tailscale-ip> -t 'farsight/default/test/telemetry' -q 1 -m \
+  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"test","cpu_percent":12.5,"mem_percent":40.2,"disk_percent":55.0}'
+```
+
+To integrate Farsight into an existing program (full schema, C SDK, custom metrics):
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
 ## Documentation
 
 - [PROJECT_SPEC.md](PROJECT_SPEC.md) — design and architectural decisions (Italian)

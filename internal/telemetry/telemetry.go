@@ -63,4 +63,14 @@ type Payload struct {
 
 	ServiceX11VNCUp     bool `json:"service_x11vnc_up"`
 	ServiceWebsockifyUp bool `json:"service_websockify_up"`
+
+	// Metrics is an open bag for anything application/device-specific that
+	// isn't one of the fixed fields above — patient counts, sensor
+	// readings, whatever the machine running farsight-agent (or a custom
+	// publisher, see docs/DEVELOPMENT.md) wants to report. Each key becomes
+	// its own InfluxDB field with no server-side config change (Telegraf's
+	// json_v2 "object" block auto-discovers them) — so the sender picks
+	// the key names, and they'd better be clear ones, since nothing here
+	// validates or namespaces them.
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 }

@@ -22,6 +22,18 @@ farsight_client *farsight_connect(const char *broker_url,
                                    const char *tenant_id,
                                    const char *device_id);
 
+/* Same as farsight_connect, but reads broker_url/tenant_id/device_id from a
+ * farsight client.conf file (MQTT_BROKER, TENANT_ID, DEVICE_ID — same
+ * format/keys as /etc/farsight/client.conf, since this is meant to run
+ * alongside a real farsight-agent install and share its identity). Pass
+ * NULL for config_path to use /etc/farsight/client.conf (or the
+ * FARSIGHT_CLIENT_CONF environment variable, if set). DEVICE_ID defaults
+ * to the machine's hostname when absent, same as farsight-agent.
+ *
+ * Returns NULL on failure (file missing/unreadable, MQTT_BROKER or
+ * TENANT_ID missing from it, or the connection itself failing). */
+farsight_client *farsight_connect_from_config(const char *config_path);
+
 /* Publishes this machine's online/offline status (retained on the broker,
  * so it survives until the next update). Returns 0 on success. */
 int farsight_set_status(farsight_client *client, int online);
@@ -32,6 +44,17 @@ int farsight_publish_telemetry(farsight_client *client,
                                 double cpu_percent,
                                 double mem_percent,
                                 double disk_percent);
+
+/* Publishes one custom, application-specific metric under the given name —
+ * anything not covered by farsight_publish_telemetry: patient counts,
+ * sensor readings, whatever this machine wants to report. Pick a clear,
+ * stable name: it becomes the InfluxDB field name as-is, nothing here
+ * validates or namespaces it. name must be a valid JSON object key
+ * (letters/digits/underscore, no quotes) — it's not escaped. Returns 0 on
+ * success. */
+int farsight_publish_metric(farsight_client *client,
+                             const char *name,
+                             double value);
 
 /* Publishes status=offline, disconnects, and frees the client. Safe to
  * call with NULL. */

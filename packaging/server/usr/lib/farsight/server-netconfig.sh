@@ -57,23 +57,42 @@ cat > /etc/telegraf/telegraf.d/farsight.conf <<EOF
     [[inputs.mqtt_consumer.json_v2.tag]]
       path = "device_id"
     [[inputs.mqtt_consumer.json_v2.field]]
+      # optional on every field below: the only hard requirement is
+      # ts/tenant_id/device_id (see the tag/timestamp_path entries above).
+      # A missing "required" path used to make Telegraf drop the whole
+      # metric silently — see PROJECT_SPEC.md history for the bug this
+      # caused with the C SDK, which sends a subset of these.
       path = "cpu_percent"
       type = "float"
+      optional = true
     [[inputs.mqtt_consumer.json_v2.field]]
       path = "mem_percent"
       type = "float"
+      optional = true
     [[inputs.mqtt_consumer.json_v2.field]]
       path = "disk_percent"
       type = "float"
+      optional = true
     [[inputs.mqtt_consumer.json_v2.field]]
       path = "tailscale_ip"
       type = "string"
+      optional = true
     [[inputs.mqtt_consumer.json_v2.field]]
       path = "service_x11vnc_up"
       type = "bool"
+      optional = true
     [[inputs.mqtt_consumer.json_v2.field]]
       path = "service_websockify_up"
       type = "bool"
+      optional = true
+    [[inputs.mqtt_consumer.json_v2.object]]
+      # Open extension bag: any key under "metrics" becomes its own
+      # InfluxDB field automatically, no config change needed per new
+      # custom metric (patient counts, sensor readings, ...). See
+      # internal/telemetry.Payload.Metrics and docs/DEVELOPMENT.md.
+      path = "metrics"
+      optional = true
+      disable_prepend_keys = true
 
 [[outputs.influxdb_v2]]
   urls = ["http://127.0.0.1:8086"]

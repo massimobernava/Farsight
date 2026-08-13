@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 struct farsight_client {
     MQTTClient mqtt;
@@ -19,6 +20,54 @@ static char *build_topic(const char *tenant_id, const char *device_id, const cha
     char *topic = malloc(n);
     if (topic) snprintf(topic, n, "farsight/%s/%s/%s", tenant_id, device_id, kind);
     return topic;
+}
+
+/* Minimal KEY=VALUE reader matching internal/config.ParseFile's format:
+ * blank lines and lines starting with '#' are skipped, values may be
+ * quoted. Returns 1 and fills *out if key is found, 0 otherwise. */
+static int config_get(const char *path, const char *key, char *out, size_t out_len) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+
+    char line[512];
+    int found = 0;
+    size_t key_len = strlen(key);
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\n' || *p == '\0') continue;
+        if (strncmp(p, key, key_len) != 0 || p[key_len] != '=') continue;
+
+        char *value = p + key_len + 1;
+        char *nl = strpbrk(value, "\r\n");
+        if (nl) *nl = '\0';
+        if (*value == '"' || *value == '\'') {
+            char quote = *value;
+            value++;
+            char *end = strrchr(value, quote);
+            if (end) *end = '\0';
+        }
+        snprintf(out, out_len, "%s", value);
+        found = 1;
+    }
+    fclose(f);
+    return found;
+}
+
+farsight_client *farsight_connect_from_config(const char *config_path) {
+    if (!config_path) config_path = getenv("FARSIGHT_CLIENT_CONF");
+    if (!config_path) config_path = "/etc/farsight/client.conf";
+
+    char broker[256], tenant_id[128], device_id[256];
+    if (!config_get(config_path, "MQTT_BROKER", broker, sizeof(broker))) return NULL;
+    if (!config_get(config_path, "TENANT_ID", tenant_id, sizeof(tenant_id))) return NULL;
+
+    if (!config_get(config_path, "DEVICE_ID", device_id, sizeof(device_id)) ||
+        device_id[0] == '\0') {
+        if (gethostname(device_id, sizeof(device_id)) != 0) return NULL;
+    }
+
+    return farsight_connect(broker, tenant_id, device_id);
 }
 
 farsight_client *farsight_connect(const char *broker_url,
@@ -94,6 +143,24 @@ int farsight_publish_telemetry(farsight_client *c,
         "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\","
         "\"cpu_percent\":%g,\"mem_percent\":%g,\"disk_percent\":%g}",
         ts, c->tenant_id, c->device_id, cpu_percent, mem_percent, disk_percent);
+
+    return publish(c, c->telemetry_topic, payload, 0);
+}
+
+int farsight_publish_metric(farsight_client *c, const char *name, double value) {
+    if (!c || !name) return -1;
+
+    char ts[32];
+    time_t now = time(NULL);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+
+    /* name is trusted to be a valid JSON object key (letters/digits/
+     * underscore, no quotes) — see farsight_publish_metric's doc comment. */
+    char payload[512];
+    snprintf(payload, sizeof(payload),
+        "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\","
+        "\"metrics\":{\"%s\":%g}}",
+        ts, c->tenant_id, c->device_id, name, value);
 
     return publish(c, c->telemetry_topic, payload, 0);
 }
