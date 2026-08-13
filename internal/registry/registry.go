@@ -1,15 +1,16 @@
-// Package registry holds the in-memory, MQTT-driven view of known devices
-// that farsight-server's control plane renders. There is no database in
-// the prototype: retained status messages on the broker are themselves the
-// persistence layer, redelivered to us on every (re)subscribe.
+// Package registry holds the in-memory, MQTT-driven connectivity state
+// (online/offline) that farsight-server's control plane renders. There is
+// no database for this: retained status messages on the broker are
+// themselves the persistence layer, redelivered to us on every
+// (re)subscribe. Time-series telemetry doesn't live here at all — that's
+// InfluxDB/Grafana's job (see PROJECT_SPEC.md "Componente 2"); this
+// package only ever tracks whether a device is currently reachable.
 package registry
 
 import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/farsight/farsight/internal/telemetry"
 )
 
 // Device is the control plane's view of one machine.
@@ -17,22 +18,15 @@ type Device struct {
 	TenantID string
 	DeviceID string
 
-	// DisplayName/Notes are persisted metadata (internal/store), merged in
-	// by the caller after List() — the registry itself only tracks live
-	// MQTT state, never identity metadata.
+	// DisplayName/Notes/Attributes are persisted metadata (internal/store),
+	// merged in by the caller after List() — the registry itself only
+	// tracks live connectivity, never identity metadata or point values.
 	DisplayName string
 	Notes       string
+	Attributes  map[string]string
 
 	Online   bool
 	LastSeen time.Time
-
-	TailscaleIP         string
-	CPUPercent          float64
-	MemPercent          float64
-	DiskPercent         float64
-	ServiceX11VNCUp     bool
-	ServiceWebsockifyUp bool
-	LastTelemetryAt     time.Time
 }
 
 // Registry is safe for concurrent use by the MQTT subscriber goroutine and
@@ -69,18 +63,14 @@ func (r *Registry) SetStatus(tenantID, deviceID string, online bool) {
 	d.LastSeen = time.Now()
 }
 
-// SetTelemetry updates a device's last-known metrics from a DataTopic message.
-func (r *Registry) SetTelemetry(p telemetry.Payload) {
+// Touch bumps a device's LastSeen without changing Online — call this on
+// any message from the device (telemetry, attributes), not just status
+// changes, so LastSeen reflects "last heard from," not just "last time
+// online/offline flipped."
+func (r *Registry) Touch(tenantID, deviceID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	d := r.get(p.TenantID, p.DeviceID)
-	d.TailscaleIP = p.TailscaleIP
-	d.CPUPercent = p.CPUPercent
-	d.MemPercent = p.MemPercent
-	d.DiskPercent = p.DiskPercent
-	d.ServiceX11VNCUp = p.ServiceX11VNCUp
-	d.ServiceWebsockifyUp = p.ServiceWebsockifyUp
-	d.LastTelemetryAt = p.Timestamp
+	r.get(tenantID, deviceID).LastSeen = time.Now()
 }
 
 // List returns a snapshot of all known devices, sorted by tenant then device ID.

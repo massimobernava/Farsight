@@ -46,6 +46,14 @@ func Open(path string) (*Store, error) {
 		created_at   TEXT NOT NULL,
 		updated_at   TEXT NOT NULL,
 		PRIMARY KEY (tenant_id, device_id)
+	);
+	CREATE TABLE IF NOT EXISTS device_attributes (
+		tenant_id  TEXT NOT NULL,
+		device_id  TEXT NOT NULL,
+		key        TEXT NOT NULL,
+		value      TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY (tenant_id, device_id, key)
 	);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -93,6 +101,41 @@ func (s *Store) SetNotes(tenantID, deviceID, notes string) error {
 		WHERE tenant_id = ? AND device_id = ?`,
 		notes, time.Now().UTC().Format(time.RFC3339), tenantID, deviceID)
 	return err
+}
+
+// SetAttribute upserts one point-in-time key/value fact for a device —
+// overwrites the previous value for that key, never accumulates. value is
+// always stored as text; SQLite doesn't enforce column typing, so this
+// covers numeric and string attributes uniformly.
+func (s *Store) SetAttribute(tenantID, deviceID, key, value string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`
+		INSERT INTO device_attributes (tenant_id, device_id, key, value, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (tenant_id, device_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+		tenantID, deviceID, key, value, now)
+	return err
+}
+
+// GetAttributes returns every known key/value attribute for a device.
+func (s *Store) GetAttributes(tenantID, deviceID string) (map[string]string, error) {
+	rows, err := s.db.Query(`
+		SELECT key, value FROM device_attributes WHERE tenant_id = ? AND device_id = ?`,
+		tenantID, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
 }
 
 // GetDevice returns the persisted metadata for (tenantID, deviceID), or a

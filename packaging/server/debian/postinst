@@ -107,6 +107,15 @@ if [ ! -s "$TOKEN_FILE" ]; then
 fi
 TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || true)
 
+# --- Allow raw HTML/iframe in Grafana Text panels — needed to embed
+# farsight-server's own admin page (rename form) as a Grafana panel
+# instead of a separate page the user has to navigate to on their own. ---
+if grep -q '^;disable_sanitize_html' /etc/grafana/grafana.ini; then
+    sed -i 's/^;disable_sanitize_html.*/disable_sanitize_html = true/' /etc/grafana/grafana.ini
+elif ! grep -q '^disable_sanitize_html' /etc/grafana/grafana.ini; then
+    printf '\n[panels]\ndisable_sanitize_html = true\n' >> /etc/grafana/grafana.ini
+fi
+
 # --- farsight-server's own device-identity database. Created by
 # farsight-server itself on first start (see internal/store); the
 # directory just needs to exist first, and needs to end up readable by the

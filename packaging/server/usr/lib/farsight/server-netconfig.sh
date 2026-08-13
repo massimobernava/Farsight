@@ -37,9 +37,13 @@ if [ -f /etc/grafana/grafana.ini ]; then
     fi
 fi
 
-# --- Telegraf: MQTT -> InfluxDB bridge ---
-# Field/tag names here must match internal/telemetry.Payload's json tags —
-# see PROJECT_SPEC.md "Fase 2" on why that schema needs to stay stable.
+# --- Telegraf: MQTT -> InfluxDB bridge, time-series data only ---
+# internal/telemetry.Payload has no fixed metric fields at all beyond
+# identity (ts/tenant_id/device_id) — everything else is under "metrics",
+# a fully open bag. Point-in-time attributes (Tailscale IP, whether the
+# desktop is reachable, ...) travel on a separate MQTT topic entirely and
+# go to farsight-server's SQLite store, not here — see
+# PROJECT_SPEC.md "Componente 2" and docs/DEVELOPMENT.md.
 TOKEN=""
 [ -f /etc/farsight/influx_token ] && TOKEN=$(cat /etc/farsight/influx_token)
 mkdir -p /etc/telegraf/telegraf.d
@@ -56,40 +60,9 @@ cat > /etc/telegraf/telegraf.d/farsight.conf <<EOF
       path = "tenant_id"
     [[inputs.mqtt_consumer.json_v2.tag]]
       path = "device_id"
-    [[inputs.mqtt_consumer.json_v2.field]]
-      # optional on every field below: the only hard requirement is
-      # ts/tenant_id/device_id (see the tag/timestamp_path entries above).
-      # A missing "required" path used to make Telegraf drop the whole
-      # metric silently — see PROJECT_SPEC.md history for the bug this
-      # caused with the C SDK, which sends a subset of these.
-      path = "cpu_percent"
-      type = "float"
-      optional = true
-    [[inputs.mqtt_consumer.json_v2.field]]
-      path = "mem_percent"
-      type = "float"
-      optional = true
-    [[inputs.mqtt_consumer.json_v2.field]]
-      path = "disk_percent"
-      type = "float"
-      optional = true
-    [[inputs.mqtt_consumer.json_v2.field]]
-      path = "tailscale_ip"
-      type = "string"
-      optional = true
-    [[inputs.mqtt_consumer.json_v2.field]]
-      path = "service_x11vnc_up"
-      type = "bool"
-      optional = true
-    [[inputs.mqtt_consumer.json_v2.field]]
-      path = "service_websockify_up"
-      type = "bool"
-      optional = true
     [[inputs.mqtt_consumer.json_v2.object]]
-      # Open extension bag: any key under "metrics" becomes its own
-      # InfluxDB field automatically, no config change needed per new
-      # custom metric (patient counts, sensor readings, ...). See
-      # internal/telemetry.Payload.Metrics and docs/DEVELOPMENT.md.
+      # Every key under "metrics" becomes its own InfluxDB field
+      # automatically, no config change needed per new metric name.
       path = "metrics"
       optional = true
       disable_prepend_keys = true

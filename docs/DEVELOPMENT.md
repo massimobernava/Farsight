@@ -72,12 +72,14 @@ principale**, `farsight-server` non cerca di diventare un motore di dashboard pr
 reinventare male qualcosa che Grafana già fa bene (editor pannelli, variabili template,
 multi-tenant via Organizations).
 
-- **Stato live** (online/offline, ultime metriche): solo in RAM in `internal/registry`, mai
-  persistito — arriva da MQTT (retained per lo status), non ha senso duplicarlo su disco.
-- **Identità persistente per macchina** (nome visualizzato, note): `internal/store`, SQLite
-  (`modernc.org/sqlite`, driver puro Go — niente cgo, stessa scelta di binario statico fatta
-  per tutto il resto). File in `/var/lib/farsight/farsight.db`, creato al primo avvio di
-  `farsight-server`.
+- **Stato live** (solo online/offline + "ultimo visto"): in RAM in `internal/registry`, mai
+  persistito — arriva da MQTT (retained per lo status), non ha senso duplicarlo su disco. Il
+  registry non tocca più telemetria/metriche: quelle sono solo affare di Telegraf→InfluxDB, il
+  control plane non le legge né le mostra (è la dashboard/Grafana a farlo).
+- **Identità e attributi persistenti per macchina** (nome visualizzato, note, e attributi
+  puntuali come IP Tailscale/raggiungibilità): `internal/store`, SQLite (`modernc.org/sqlite`,
+  driver puro Go — niente cgo, stessa scelta di binario statico fatta per tutto il resto). File
+  in `/var/lib/farsight/farsight.db`, creato al primo avvio di `farsight-server`.
 - **Grafana legge lo stesso file SQLite direttamente** (plugin `frser-sqlite-datasource`,
   installato idempotentemente dal postinst) — non passa dal control plane per leggere
   l'anagrafica, query SQL dirette.
@@ -89,41 +91,60 @@ multi-tenant via Organizations).
 - **Datasource Grafana provisionate da file**, non da chiamate API a mano (`postinst` scrive
   `/etc/grafana/provisioning/datasources/farsight.yaml` con token InfluxDB e path SQLite già
   compilati) — idempotente, un vero install non ha un admin che clicca nella UI di Grafana.
+- **Elenco macchine in Grafana: iframe, non pannello tabella nativo.** Il pannello tabella
+  nativo (datasource SQLite via plugin `frser-sqlite-datasource`) non renderizzava in modo
+  affidabile e non c'è modo di verificarlo da qui (nessun accesso browser in questo ambiente di
+  sviluppo — solo l'API `/api/ds/query`, che verifica la query, non il rendering del pannello).
+  Soluzione: un pannello Text/HTML con `<iframe src="http://<ip>:8080/">` — verificabile
+  end-to-end via `curl` contro `farsight-server` stesso. `GET /?device=<id>` filtra a una sola
+  macchina (usato dal pannello "Macchina" via `${device_id}`, interpolato da Grafana nell'URL
+  dell'iframe).
 
-## Schema telemetria / integrare un publisher custom
+## Schema dati / integrare un publisher custom
 
 Il contratto client→server è solo "pubblica JSON su MQTT ai topic giusti" — non serve per
-forza far girare `farsight-agent`: utile per integrare un programma esistente che vuole
-mandare i propri dati senza un processo esterno.
+forza far girare `farsight-agent`. Due topic distinti, per due tipi di dato diversi (nessuno
+dei due è "standard" o obbligatorio oltre all'identità):
 
-- `farsight/<tenant_id>/<device_id>/telemetry` — JSON, schema in
-  [`internal/telemetry/telemetry.go`](../internal/telemetry/telemetry.go) (`Payload`). Solo
-  `ts`/`tenant_id`/`device_id` sono obbligatori lato Telegraf (`optional = true` su tutto il
-  resto — vedi `packaging/server/usr/lib/farsight/server-netconfig.sh`); un publisher può
-  mandarne un sottoinsieme qualsiasi.
-- `farsight/<tenant_id>/<device_id>/status` — retained, `online`/`offline` (nell'agent è
-  guidato dal Last Will MQTT: se il processo muore senza disconnessione pulita, il broker
-  stesso marca la macchina offline).
-- **Metriche custom**: campo `metrics` (oggetto JSON libero, `{"nome": valore, ...}`) dentro
-  lo stesso payload di telemetria — per dati specifici dell'applicazione che non sono CPU/RAM/
-  disco (es. numero pazienti visitati, letture sensori). Telegraf lo scompone automaticamente:
-  ogni chiave diventa un campo InfluxDB a sé, **senza toccare nessuna config server** per
-  aggiungerne una nuova. Il nome della chiave è quello che finisce in InfluxDB/Grafana — va
-  scelto con cura, non c'è validazione. `tenant_id`/`device_id` restano gli unici identificatori
-  richiesti: non serve un terzo ID per "che tipo di dato è", basta il nome della metrica.
+- `farsight/<tenant_id>/<device_id>/telemetry` — **serie temporale**, va in InfluxDB e si
+  accumula nel tempo. Schema in [`internal/telemetry/telemetry.go`](../internal/telemetry/telemetry.go)
+  (`Payload`): solo `ts`/`tenant_id`/`device_id` sono a livello fisso, tutto il resto vive
+  dentro `metrics` (oggetto JSON libero, `{"nome": valore, ...}`). Telegraf lo scompone
+  automaticamente — ogni chiave diventa un campo InfluxDB a sé, **senza toccare nessuna config
+  server** per aggiungerne una nuova (vedi `packaging/server/usr/lib/farsight/server-netconfig.sh`).
+  Nemmeno CPU/RAM/disco sono privilegiati: `farsight-agent` li manda perché è la sua funzione,
+  ma sono solo voci come le altre dentro `metrics`, e sono disattivabili (`PUBLISH_TELEMETRY=false`
+  in `client.conf`).
+- `farsight/<tenant_id>/<device_id>/attributes` — **valore puntuale**, va in SQLite
+  (`internal/store`) e sovrascrive invece di accumulare (`Attribute` in telemetry.go: `key`/
+  `value`, sempre stringa). Per fatti sullo stato corrente: IP Tailscale, se il desktop è
+  raggiungibile, versione firmware, ecc. — mai una cosa di cui vuoi lo storico, altrimenti è
+  telemetria. `farsight-agent` pubblica qui `tailscale_ip` e un unico `desktop_available`
+  (true solo se sia x11vnc che websockify sono su — niente booleani tecnici separati esposti).
+- `farsight/<tenant_id>/<device_id>/status` — retained, `online`/`offline` (guidato dal Last
+  Will MQTT: se il processo muore senza disconnessione pulita, il broker stesso marca la
+  macchina offline — non serve ripubblicarlo periodicamente).
+
+`tenant_id`/`device_id` restano gli unici identificatori richiesti su ogni topic: non serve un
+terzo ID per "che tipo di dato è", basta scegliere il topic giusto.
 
 **Da CLI**, con `mosquitto_pub` (pacchetto `mosquitto-clients`):
 
 ```bash
 mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/status' -r -q 1 -m 'online'
 
+# serie temporale
 mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/telemetry' -q 1 -m \
-  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"mia-macchina","cpu_percent":12.5,"mem_percent":40.2,"disk_percent":55.0,"service_x11vnc_up":true,"service_websockify_up":true}'
+  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"mia-macchina","metrics":{"cpu_percent":12.5,"patients_visited":7}}'
+
+# valore puntuale
+mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/attributes' -q 1 -m \
+  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"mia-macchina","key":"firmware_version","value":"1.4.2"}'
 ```
 
 **Da C**, con l'SDK in [`sdk/c/`](../sdk/c/) — wrapper minimo sopra Eclipse Paho MQTT C
 (`libpaho-mqtt-dev` su Ubuntu) che nasconde MQTT dietro poche funzioni con nomi propri, incluse
-metriche custom e lettura automatica di tenant/device da `client.conf` (dettagli nel
+lettura automatica di tenant/device da `client.conf` (dettagli nel
 [README dell'SDK](../sdk/c/README.md)):
 
 ```c
@@ -134,8 +155,9 @@ int main(void) {
     farsight_client *c = farsight_connect_from_config(NULL); /* legge client.conf */
     if (!c) return 1;
 
-    farsight_publish_telemetry(c, 12.5 /* cpu% */, 40.2 /* mem% */, 55.0 /* disk% */);
-    farsight_publish_metric(c, "patients_visited", 7); /* metrica custom, qualunque nome */
+    farsight_publish_series(c, "cpu_percent", 12.5);       /* -> InfluxDB, storico */
+    farsight_publish_series(c, "patients_visited", 7);      /* -> InfluxDB, storico */
+    farsight_set_attribute(c, "firmware_version", "1.4.2"); /* -> SQLite, stato corrente */
 
     farsight_disconnect(c); /* pubblica anche status=offline, pulito */
     return 0;
@@ -143,6 +165,5 @@ int main(void) {
 ```
 
 `farsight_connect` pubblica subito `status=online` e imposta un Last Will MQTT su
-`status=offline` (stessa garanzia di `farsight-agent`: se il processo muore senza
-disconnessione pulita, il broker marca comunque la macchina offline). Compilato ed eseguito
-davvero contro il control plane, non solo scritto a mano — vedi [`sdk/c/example.c`](../sdk/c/example.c).
+`status=offline` (stessa garanzia di `farsight-agent`). Compilato ed eseguito davvero contro il
+control plane, non solo scritto a mano — vedi [`sdk/c/example.c`](../sdk/c/example.c).

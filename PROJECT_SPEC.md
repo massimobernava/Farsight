@@ -89,14 +89,20 @@ Da installare su ogni macchina Ubuntu da monitorare/controllare.
   stesso host (es. via un piccolo web server integrato o lo stesso
   websockify che supporta serving di file statici).
 - **Agent di telemetria** (`farsight-agent`): piccolo processo che pubblica periodicamente su
-  MQTT (broker centrale sul server) via publish:
-  - stato online/heartbeat
-  - IP Tailscale corrente
-  - metriche di sistema di base (CPU, RAM, disco — estendibile in seguito
-    a metriche specifiche del processo LabVIEW se necessario)
-  - stato dei servizi locali (x11vnc/websockify up/down) — utile per
-    sapere dalla dashboard se la macchina è "online in VPN" ma con VNC
-    non raggiungibile
+  MQTT (broker centrale sul server), su due topic distinti — nessuno dei due obbligatorio,
+  nemmeno per l'agent stesso:
+  - **stato online/offline**: retained + Last Will MQTT, gestito automaticamente dalla
+    connessione (nessun heartbeat periodico da ripubblicare — il broker marca offline appena
+    la connessione cade)
+  - **attributi puntuali** (sovrascrivono, non si accumulano): IP Tailscale corrente,
+    `desktop_available` (true solo se sia x11vnc che websockify sono su — un solo stato
+    "raggiungibile o no", non due booleani tecnici separati)
+  - **telemetria/serie temporale** (opzionale, `PUBLISH_TELEMETRY` in `client.conf`): metriche
+    di sistema di base (CPU, RAM, disco — estendibile in seguito a metriche specifiche del
+    processo LabVIEW). Nessun campo è "di serie": anche CPU/RAM/disco sono solo voci in un bag
+    aperto di metriche, non campi fissi nello schema — vedi "Fase 2" più sotto per il razionale
+    e per come un publisher qualsiasi (SDK C, script) può aggiungerne di custom senza toccare
+    configurazione server
 - **Registrazione al server**: al primo avvio, il client si presenta al
   control plane del server (via API interna, dentro la VPN) con un
   token di provisioning per associarsi al tenant/gruppo corretto.

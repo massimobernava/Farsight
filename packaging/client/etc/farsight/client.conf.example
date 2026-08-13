@@ -12,8 +12,15 @@ TENANT_ID=default
 # Device identifier. Defaults to the machine hostname if left empty.
 DEVICE_ID=
 
-# How often to publish telemetry, in seconds.
+# How often to publish attributes (and telemetry, if enabled below), in
+# seconds. Attributes (Tailscale IP, desktop reachability) always publish
+# regardless of PUBLISH_TELEMETRY — they're what the dashboard needs.
 PUBLISH_INTERVAL_SECONDS=30
+
+# Whether to also publish CPU/RAM/disk as time-series telemetry (visible in
+# Grafana, not the dashboard). Not "standard" — your choice, off doesn't
+# break anything else.
+PUBLISH_TELEMETRY=true
 
 # --- Tailscale ---
 # Coordination server for `tailscale up --login-server=...`. Leave empty to

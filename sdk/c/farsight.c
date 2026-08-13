@@ -12,7 +12,8 @@ struct farsight_client {
     char *tenant_id;
     char *device_id;
     char *status_topic;
-    char *telemetry_topic;
+    char *data_topic;
+    char *attributes_topic;
 };
 
 static char *build_topic(const char *tenant_id, const char *device_id, const char *kind) {
@@ -54,6 +55,20 @@ static int config_get(const char *path, const char *key, char *out, size_t out_l
     return found;
 }
 
+static int publish(farsight_client *c, const char *topic, const char *payload, int retained) {
+    if (!c) return -1;
+    MQTTClient_deliveryToken token;
+    int rc = MQTTClient_publish(c->mqtt, topic, (int)strlen(payload), payload, 1, retained, &token);
+    if (rc != MQTTCLIENT_SUCCESS) return rc;
+    return MQTTClient_waitForCompletion(c->mqtt, token, 5000);
+}
+
+/* Internal only — see farsight_connect's doc comment for why this isn't
+ * exposed for callers to invoke themselves. */
+static int set_status(farsight_client *c, int online) {
+    return publish(c, c ? c->status_topic : NULL, online ? "online" : "offline", 1);
+}
+
 farsight_client *farsight_connect_from_config(const char *config_path) {
     if (!config_path) config_path = getenv("FARSIGHT_CLIENT_CONF");
     if (!config_path) config_path = "/etc/farsight/client.conf";
@@ -79,8 +94,9 @@ farsight_client *farsight_connect(const char *broker_url,
     c->tenant_id = strdup(tenant_id);
     c->device_id = strdup(device_id);
     c->status_topic = build_topic(tenant_id, device_id, "status");
-    c->telemetry_topic = build_topic(tenant_id, device_id, "telemetry");
-    if (!c->tenant_id || !c->device_id || !c->status_topic || !c->telemetry_topic) {
+    c->data_topic = build_topic(tenant_id, device_id, "telemetry");
+    c->attributes_topic = build_topic(tenant_id, device_id, "attributes");
+    if (!c->tenant_id || !c->device_id || !c->status_topic || !c->data_topic || !c->attributes_topic) {
         farsight_disconnect(c);
         return NULL;
     }
@@ -112,42 +128,11 @@ farsight_client *farsight_connect(const char *broker_url,
         return NULL;
     }
 
-    farsight_set_status(c, 1);
+    set_status(c, 1);
     return c;
 }
 
-static int publish(farsight_client *c, const char *topic, const char *payload, int retained) {
-    if (!c) return -1;
-    MQTTClient_deliveryToken token;
-    int rc = MQTTClient_publish(c->mqtt, topic, (int)strlen(payload), payload, 1, retained, &token);
-    if (rc != MQTTCLIENT_SUCCESS) return rc;
-    return MQTTClient_waitForCompletion(c->mqtt, token, 5000);
-}
-
-int farsight_set_status(farsight_client *c, int online) {
-    return publish(c, c ? c->status_topic : NULL, online ? "online" : "offline", 1);
-}
-
-int farsight_publish_telemetry(farsight_client *c,
-                                double cpu_percent,
-                                double mem_percent,
-                                double disk_percent) {
-    if (!c) return -1;
-
-    char ts[32];
-    time_t now = time(NULL);
-    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
-
-    char payload[512];
-    snprintf(payload, sizeof(payload),
-        "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\","
-        "\"cpu_percent\":%g,\"mem_percent\":%g,\"disk_percent\":%g}",
-        ts, c->tenant_id, c->device_id, cpu_percent, mem_percent, disk_percent);
-
-    return publish(c, c->telemetry_topic, payload, 0);
-}
-
-int farsight_publish_metric(farsight_client *c, const char *name, double value) {
+int farsight_publish_series(farsight_client *c, const char *name, double value) {
     if (!c || !name) return -1;
 
     char ts[32];
@@ -155,26 +140,52 @@ int farsight_publish_metric(farsight_client *c, const char *name, double value) 
     strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
 
     /* name is trusted to be a valid JSON object key (letters/digits/
-     * underscore, no quotes) — see farsight_publish_metric's doc comment. */
+     * underscore, no quotes) — see farsight_publish_series's doc comment. */
     char payload[512];
     snprintf(payload, sizeof(payload),
         "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\","
         "\"metrics\":{\"%s\":%g}}",
         ts, c->tenant_id, c->device_id, name, value);
 
-    return publish(c, c->telemetry_topic, payload, 0);
+    return publish(c, c->data_topic, payload, 0);
+}
+
+int farsight_set_attribute_string(farsight_client *c, const char *key, const char *value) {
+    if (!c || !key || !value) return -1;
+
+    char ts[32];
+    time_t now = time(NULL);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+
+    /* key/value are trusted not to contain unescaped quotes — see
+     * farsight_set_attribute_string's doc comment. */
+    char payload[768];
+    snprintf(payload, sizeof(payload),
+        "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\","
+        "\"key\":\"%s\",\"value\":\"%s\"}",
+        ts, c->tenant_id, c->device_id, key, value);
+
+    return publish(c, c->attributes_topic, payload, 0);
+}
+
+int farsight_set_attribute_double(farsight_client *c, const char *key, double value) {
+    if (!c || !key) return -1;
+    char value_str[64];
+    snprintf(value_str, sizeof(value_str), "%g", value);
+    return farsight_set_attribute_string(c, key, value_str);
 }
 
 void farsight_disconnect(farsight_client *c) {
     if (!c) return;
     if (c->mqtt) {
-        farsight_set_status(c, 0);
+        set_status(c, 0);
         MQTTClient_disconnect(c->mqtt, 1000);
         MQTTClient_destroy(&c->mqtt);
     }
     free(c->tenant_id);
     free(c->device_id);
     free(c->status_topic);
-    free(c->telemetry_topic);
+    free(c->data_topic);
+    free(c->attributes_topic);
     free(c);
 }

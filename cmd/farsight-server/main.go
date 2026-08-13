@@ -78,6 +78,7 @@ func run() error {
 			log.Printf("connected to broker %s, subscribing", broker)
 			c.Subscribe(telemetry.StatusWildcard, 1, onStatus(reg, st))
 			c.Subscribe(telemetry.DataWildcard, 1, onData(reg, st))
+			c.Subscribe(telemetry.AttributesWildcard, 1, onAttribute(reg, st))
 		})
 
 	client := mqtt.NewClient(opts)
@@ -91,7 +92,21 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := dashboard.Render(w, listWithMeta(reg, st), dashCfg); err != nil {
+		devices := listWithMeta(reg, st)
+		// ?device=<device_id> filters to a single machine — used by the
+		// Grafana "Macchina" dashboard's iframe panel, which interpolates
+		// its own $device_id variable into this URL. Without the param,
+		// every device shows (the "Sistema" dashboard's iframe panel).
+		if filter := r.URL.Query().Get("device"); filter != "" {
+			filtered := devices[:0]
+			for _, d := range devices {
+				if d.DeviceID == filter {
+					filtered = append(filtered, d)
+				}
+			}
+			devices = filtered
+		}
+		if err := dashboard.Render(w, devices, dashCfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -130,18 +145,25 @@ func run() error {
 	return nil
 }
 
-// listWithMeta merges the registry's live MQTT state with each device's
-// persisted identity metadata (display name, notes) from SQLite.
+// listWithMeta merges the registry's live connectivity state with each
+// device's persisted identity metadata and attributes from SQLite.
 func listWithMeta(reg *registry.Registry, st *store.Store) []registry.Device {
 	devices := reg.List()
 	for i := range devices {
 		meta, err := st.GetDevice(devices[i].TenantID, devices[i].DeviceID)
 		if err != nil {
-			log.Printf("store: lookup failed for %s/%s: %v", devices[i].TenantID, devices[i].DeviceID, err)
+			log.Printf("store: device lookup failed for %s/%s: %v", devices[i].TenantID, devices[i].DeviceID, err)
 			continue
 		}
 		devices[i].DisplayName = meta.DisplayName
 		devices[i].Notes = meta.Notes
+
+		attrs, err := st.GetAttributes(devices[i].TenantID, devices[i].DeviceID)
+		if err != nil {
+			log.Printf("store: attributes lookup failed for %s/%s: %v", devices[i].TenantID, devices[i].DeviceID, err)
+			continue
+		}
+		devices[i].Attributes = attrs
 	}
 	return devices
 }
@@ -161,6 +183,9 @@ func onStatus(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
 	}
 }
 
+// onData only registers the device's existence — the telemetry itself
+// (time-series metrics) is Telegraf's job to write to InfluxDB, not
+// farsight-server's; see PROJECT_SPEC.md "Componente 2".
 func onData(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
 	return func(_ mqtt.Client, msg mqtt.Message) {
 		var p telemetry.Payload
@@ -168,9 +193,23 @@ func onData(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
 			log.Printf("telemetry: bad payload on %s: %v", msg.Topic(), err)
 			return
 		}
-		reg.SetTelemetry(p)
+		reg.Touch(p.TenantID, p.DeviceID)
 		if err := st.EnsureDevice(p.TenantID, p.DeviceID); err != nil {
 			log.Printf("store: ensure device failed for %s/%s: %v", p.TenantID, p.DeviceID, err)
+		}
+	}
+}
+
+func onAttribute(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
+	return func(_ mqtt.Client, msg mqtt.Message) {
+		var a telemetry.Attribute
+		if err := json.Unmarshal(msg.Payload(), &a); err != nil {
+			log.Printf("attribute: bad payload on %s: %v", msg.Topic(), err)
+			return
+		}
+		reg.Touch(a.TenantID, a.DeviceID)
+		if err := st.SetAttribute(a.TenantID, a.DeviceID, a.Key, a.Value); err != nil {
+			log.Printf("store: set attribute failed for %s/%s: %v", a.TenantID, a.DeviceID, err)
 		}
 	}
 }

@@ -14,8 +14,16 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    farsight_publish_telemetry(c, 12.5, 40.2, 55.0);
-    printf("published telemetry for %s/%s\n", argv[2], argv[3]);
+    /* Time series: accumulates in InfluxDB. Nothing is "standard" — CPU
+     * here is just an example, pick whatever names make sense. */
+    farsight_publish_series(c, "cpu_percent", 12.5);
+    farsight_publish_series(c, "patients_visited", 7);
+
+    /* Point value: overwrites in SQLite, no history kept. */
+    farsight_set_attribute_string(c, "firmware_version", "1.4.2");
+    farsight_set_attribute_double(c, "battery_voltage", 3.7);
+
+    printf("published for %s/%s\n", argv[2], argv[3]);
 
     farsight_disconnect(c);
     return 0;

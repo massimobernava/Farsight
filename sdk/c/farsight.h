@@ -12,6 +12,13 @@ extern "C" {
 typedef struct farsight_client farsight_client;
 
 /* Connects to the Farsight MQTT broker for a given machine identity.
+ * Online/offline status is automatic, not something you call yourself: it
+ * publishes "online" the moment this succeeds, and sets an MQTT Last Will
+ * so the broker publishes "offline" the instant the connection drops —
+ * cleanly via farsight_disconnect, or on a crash/network loss. There's no
+ * scenario where you'd have a connected client whose status should be
+ * "offline," so nothing here lets you declare one out of sync with the
+ * other.
  *
  * broker_url: e.g. "tcp://100.x.x.x:1883" (the server's Tailscale IP)
  * tenant_id, device_id: identify this machine in the dashboard/Grafana —
@@ -34,27 +41,39 @@ farsight_client *farsight_connect(const char *broker_url,
  * TENANT_ID missing from it, or the connection itself failing). */
 farsight_client *farsight_connect_from_config(const char *config_path);
 
-/* Publishes this machine's online/offline status (retained on the broker,
- * so it survives until the next update). Returns 0 on success. */
-int farsight_set_status(farsight_client *client, int online);
-
-/* Publishes one telemetry sample: CPU/RAM/disk usage as percentages
- * (0-100). Returns 0 on success. */
-int farsight_publish_telemetry(farsight_client *client,
-                                double cpu_percent,
-                                double mem_percent,
-                                double disk_percent);
-
-/* Publishes one custom, application-specific metric under the given name —
- * anything not covered by farsight_publish_telemetry: patient counts,
- * sensor readings, whatever this machine wants to report. Pick a clear,
- * stable name: it becomes the InfluxDB field name as-is, nothing here
- * validates or namespaces it. name must be a valid JSON object key
- * (letters/digits/underscore, no quotes) — it's not escaped. Returns 0 on
- * success. */
-int farsight_publish_metric(farsight_client *client,
+/* Publishes one TIME-SERIES sample under the given name — a value that
+ * accumulates over time in InfluxDB (CPU load, a sensor reading, a patient
+ * count taken repeatedly, anything you'd want to graph against time).
+ * Nothing is "standard" here: CPU/RAM/disk are not privileged, call this
+ * with whatever name/value makes sense — e.g.
+ * farsight_publish_series(c, "cpu_percent", 12.5). Pick a clear, stable
+ * name: it becomes the InfluxDB field name as-is, nothing here validates
+ * or namespaces it. name must be a valid JSON object key (letters/digits/
+ * underscore, no quotes) — it's not escaped. Returns 0 on success. */
+int farsight_publish_series(farsight_client *client,
                              const char *name,
                              double value);
+
+/* Publishes one POINT-IN-TIME attribute — a fact about current state that
+ * OVERWRITES the previous value rather than accumulating (a Tailscale IP,
+ * a firmware version, whether the desktop is reachable right now). Lands
+ * in farsight-server's SQLite store, not InfluxDB — wrong tool for
+ * anything you'd want a history of, use farsight_publish_series for that
+ * instead. key must be a valid JSON object key (letters/digits/underscore)
+ * and value must not contain unescaped double quotes or backslashes —
+ * neither is JSON-escaped. Returns 0 on success. */
+int farsight_set_attribute_string(farsight_client *client,
+                                   const char *key,
+                                   const char *value);
+
+/* Same as farsight_set_attribute_string, for a numeric point value — does
+ * the string conversion internally so a call site never has to (and can't
+ * accidentally pass a bare 0 where a string was expected, silently
+ * compiling as a null pointer — a real C footgun this avoids). Returns 0
+ * on success. */
+int farsight_set_attribute_double(farsight_client *client,
+                                   const char *key,
+                                   double value);
 
 /* Publishes status=offline, disconnects, and frees the client. Safe to
  * call with NULL. */

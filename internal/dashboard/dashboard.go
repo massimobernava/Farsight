@@ -1,6 +1,8 @@
 // Package dashboard renders the control plane's device list page: the
 // "vetrina minima" from PROJECT_SPEC.md step 3 — online/offline status per
-// machine and a direct noVNC link, nothing more.
+// machine and a direct noVNC link, nothing more. Time-series telemetry
+// (CPU/RAM/disk, custom metrics) is Grafana's job, not this page's — see
+// PROJECT_SPEC.md "Componente 2".
 package dashboard
 
 import (
@@ -43,10 +45,10 @@ var pageTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html
 <table>
 <tr>
   <th>Nome</th><th>Tenant</th><th>Device ID</th><th>Stato</th><th>IP Tailscale</th>
-  <th>CPU%</th><th>RAM%</th><th>Disk%</th><th>x11vnc</th><th>websockify</th>
   <th>Accesso</th>
 </tr>
 {{range .Devices}}
+{{$tsIP := index .Attributes "tailscale_ip"}}
 <tr>
   <td>
     <form method="post" action="/devices/{{.TenantID}}/{{.DeviceID}}/rename" style="display:flex;gap:0.3rem;">
@@ -58,23 +60,18 @@ var pageTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html
   <td>{{.TenantID}}</td>
   <td>{{.DeviceID}}</td>
   <td>{{if .Online}}<span class="online">● online</span>{{else}}<span class="offline">● offline</span>{{end}}</td>
-  <td>{{if .TailscaleIP}}{{.TailscaleIP}}{{else}}<span class="muted">n/d</span>{{end}}</td>
-  <td>{{printf "%.0f" .CPUPercent}}</td>
-  <td>{{printf "%.0f" .MemPercent}}</td>
-  <td>{{printf "%.0f" .DiskPercent}}</td>
-  <td>{{if .ServiceX11VNCUp}}up{{else}}down{{end}}</td>
-  <td>{{if .ServiceWebsockifyUp}}up{{else}}down{{end}}</td>
+  <td>{{if $tsIP}}{{$tsIP}}{{else}}<span class="muted">n/d</span>{{end}}</td>
   <td>
-    {{if .TailscaleIP}}
-      <a href="http://{{.TailscaleIP}}:{{$.WebsockifyPort}}/vnc.html" target="_blank">Desktop</a>
-      &middot; <span class="muted">ssh {{if $.SSHUser}}{{$.SSHUser}}@{{end}}{{.TailscaleIP}}</span>
+    {{if and .Online $tsIP}}
+      <a href="http://{{$tsIP}}:{{$.WebsockifyPort}}/vnc.html" target="_blank">Desktop</a>
+      &middot; <span class="muted">ssh {{if $.SSHUser}}{{$.SSHUser}}@{{end}}{{$tsIP}}</span>
     {{else}}
-      <span class="muted">-</span>
+      <span class="muted">non raggiungibile</span>
     {{end}}
   </td>
 </tr>
 {{else}}
-<tr><td colspan="11" class="muted">Nessuna macchina ancora registrata.</td></tr>
+<tr><td colspan="6" class="muted">Nessuna macchina ancora registrata.</td></tr>
 {{end}}
 </table>
 </body>
