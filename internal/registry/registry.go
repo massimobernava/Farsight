@@ -17,6 +17,12 @@ type Device struct {
 	TenantID string
 	DeviceID string
 
+	// DisplayName/Notes are persisted metadata (internal/store), merged in
+	// by the caller after List() — the registry itself only tracks live
+	// MQTT state, never identity metadata.
+	DisplayName string
+	Notes       string
+
 	Online   bool
 	LastSeen time.Time
 

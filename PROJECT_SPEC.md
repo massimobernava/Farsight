@@ -127,16 +127,39 @@ dentro la stessa rete Tailscale.
 
 - **Mosquitto** (broker MQTT centrale): riceve la telemetria pubblicata da
   tutti i client.
-- **InfluxDB** (o TimescaleDB, da valutare in fase implementativa): storage
-  time-series per la telemetria.
-- **Grafana**: dashboard di visualizzazione della telemetria storica.
-- **Control plane applicativo** (`farsight-server`, da sviluppare — è il
-  vero cuore del progetto):
-  - elenco macchine registrate, stato online/offline (incrociando dati
-    MQTT + eventualmente API Tailscale se disponibile)
-  - per ogni macchina: link diretto generato dinamicamente a
+- **InfluxDB**: storage time-series per la telemetria, alimentato da
+  **Telegraf** che fa da bridge MQTT→InfluxDB (nessun codice di ingestion
+  nostro).
+- **SQLite** (`/var/lib/farsight/farsight.db`): anagrafica macchine
+  persistente — nome visualizzato, note — scritta da `farsight-server`,
+  letta anche direttamente da Grafana (plugin datasource SQLite) per dati
+  non a serie temporale (es. futuri record strutturati da upload file).
+- **Grafana è l'interfaccia principale**, non solo storico telemetria —
+  decisione esplicita (non il control plane applicativo a costruire un
+  proprio motore di dashboard, sarebbe reinventare Grafana):
+  - **Organizations** Grafana per il multi-tenant (un cliente = una org,
+    isolamento dashboard/permessi/datasource nativo)
+  - dashboard per macchina via variabile template (`device_id`),
+    modificabile liberamente dall'utente finale (ruolo Editor) — nessun
+    editor di pannelli da costruire
+  - dati non a serie temporale (es. record strutturati) via datasource
+    SQLite che legge lo stesso file scritto dal control plane
+  - futuro assistente LLM (vedi Fase 2): pannello/plugin Grafana, stesso
+    principio di "un'unica interfaccia"
+- **Control plane applicativo** (`farsight-server`): non è più pensato come
+  l'interfaccia principale, ma come backend + superficie per le azioni di
+  scrittura che Grafana (tool di visualizzazione, debole in CRUD) non
+  copre bene:
+  - elenco macchine, stato online/offline (da MQTT, nessun DB per questo:
+    i retained message del broker sono già la persistenza)
+  - anagrafica persistente per macchina (nome, note) in SQLite, modificabile
+    da un form nella pagina del control plane
+  - link diretto generato dinamicamente a
     `http://<ip-tailscale-macchina>:<porta-websockify>/vnc.html` per
     l'accesso desktop, e indicazione dell'IP per SSH manuale
+  - pensata per essere incorporata dentro Grafana (pannello iframe) così
+    l'utente finale resta sempre "dentro Grafana" — non serve sviluppo di
+    plugin Grafana vero e proprio per questo, un iframe basta
   - gestione utenti/permessi (chi può vedere/accedere a quali macchine) —
     in fase di prototipo può essere minimale, ma progettato in vista di
     multi-tenant

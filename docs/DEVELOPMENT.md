@@ -7,8 +7,9 @@ vedi il [README](../README.md). Design e scelte architetturali: [PROJECT_SPEC.md
 
 ```
 cmd/farsight-agent/     binario client: telemetria MQTT
-cmd/farsight-server/    binario server: control plane / dashboard
-internal/               pacchetti Go condivisi (config, telemetria, registry, ...)
+cmd/farsight-server/    binario server: control plane (backend + pagina azioni di scrittura)
+internal/               pacchetti Go condivisi (config, telemetria, registry, store, ...)
+sdk/c/                  SDK C per integrare Farsight senza gestire MQTT direttamente
 packaging/client/       sorgenti .deb client (systemd unit, wrapper x11vnc/websockify, postinst)
 packaging/server/       sorgenti .deb server (systemd unit, netconfig, postinst)
 docker/                 Dockerfile + script per ambienti di test locali (systemd-in-docker)
@@ -63,6 +64,31 @@ su tutte le interfacce invece che solo loopback.
   versione tipo `v0.1.0`). Builda entrambi i `.deb` con quella versione, crea il tag, e apre una
   **Release GitHub in bozza** con i due `.deb` allegati (tab Releases) — la pubblichi a mano
   dopo averla controllata.
+
+## Control plane e Grafana
+
+Decisione architetturale (vedi PROJECT_SPEC.md "Componente 2"): **Grafana è l'interfaccia
+principale**, `farsight-server` non cerca di diventare un motore di dashboard proprio — sarebbe
+reinventare male qualcosa che Grafana già fa bene (editor pannelli, variabili template,
+multi-tenant via Organizations).
+
+- **Stato live** (online/offline, ultime metriche): solo in RAM in `internal/registry`, mai
+  persistito — arriva da MQTT (retained per lo status), non ha senso duplicarlo su disco.
+- **Identità persistente per macchina** (nome visualizzato, note): `internal/store`, SQLite
+  (`modernc.org/sqlite`, driver puro Go — niente cgo, stessa scelta di binario statico fatta
+  per tutto il resto). File in `/var/lib/farsight/farsight.db`, creato al primo avvio di
+  `farsight-server`.
+- **Grafana legge lo stesso file SQLite direttamente** (plugin `frser-sqlite-datasource`,
+  installato idempotentemente dal postinst) — non passa dal control plane per leggere
+  l'anagrafica, query SQL dirette.
+- **Le uniche scritture** (rinominare una macchina, per ora) passano da un form HTML minimale
+  servito da `farsight-server` stesso (`POST /devices/{tenant}/{device}/rename`) — pensato per
+  essere incorporato in Grafana come **pannello iframe**, non per essere usato come pagina a sé.
+  Grafana è debole in CRUD, non vale la pena costruirci un plugin vero sopra per una form del
+  genere.
+- **Datasource Grafana provisionate da file**, non da chiamate API a mano (`postinst` scrive
+  `/etc/grafana/provisioning/datasources/farsight.yaml` con token InfluxDB e path SQLite già
+  compilati) — idempotente, un vero install non ha un admin che clicca nella UI di Grafana.
 
 ## Schema telemetria / integrare un publisher custom
 

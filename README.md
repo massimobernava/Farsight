@@ -50,7 +50,8 @@ systemctl restart farsight-agent farsight-x11vnc farsight-vnc-proxy
 ## Uso
 
 - **Dashboard**: `http://<ip-tailscale-server>:8080/` — elenco macchine, stato online/offline,
-  link diretto al desktop remoto di ciascuna.
+  link diretto al desktop remoto di ciascuna. Puoi dare un nome a ogni macchina (es. "Sala
+  Operatoria 1") dal campo accanto al suo ID: resta salvato anche dopo un riavvio.
 - **Grafana**: `http://<ip-tailscale-server>:3000/` (primo accesso `admin`/`admin`, poi richiede
   cambio password) — storico delle metriche.
 

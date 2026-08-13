@@ -49,7 +49,8 @@ systemctl restart farsight-agent farsight-x11vnc farsight-vnc-proxy
 ## Usage
 
 - **Dashboard**: `http://<server-tailscale-ip>:8080/` — machine list, online/offline status,
-  direct link to each machine's remote desktop.
+  direct link to each machine's remote desktop. You can give each machine a name (e.g.
+  "Operating Room 1") in the field next to its ID: it's saved and survives a restart.
 - **Grafana**: `http://<server-tailscale-ip>:3000/` (first login `admin`/`admin`, then a
   password change is required) — historical metrics.
 

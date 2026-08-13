@@ -23,3 +23,7 @@ SSH_USER=
 # never 0.0.0.0, per PROJECT_SPEC.md. "loopback" is only for local debugging
 # without a tailnet.
 BIND_INTERFACE=tailscale
+
+# SQLite database for persisted device identity (display name, notes) —
+# Grafana's SQLite datasource plugin reads the same file directly.
+SQLITE_PATH=/var/lib/farsight/farsight.db

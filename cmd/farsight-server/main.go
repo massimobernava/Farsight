@@ -19,6 +19,7 @@ import (
 	"github.com/farsight/farsight/internal/config"
 	"github.com/farsight/farsight/internal/dashboard"
 	"github.com/farsight/farsight/internal/registry"
+	"github.com/farsight/farsight/internal/store"
 	"github.com/farsight/farsight/internal/tailscaleip"
 	"github.com/farsight/farsight/internal/telemetry"
 )
@@ -46,6 +47,13 @@ func run() error {
 	websockifyPort := cfg.GetInt("WEBSOCKIFY_PORT", 6080)
 	sshUser := cfg.Get("SSH_USER", "")
 	bindIface := cfg.Get("BIND_INTERFACE", "tailscale")
+	sqlitePath := cfg.Get("SQLITE_PATH", "/var/lib/farsight/farsight.db")
+
+	st, err := store.Open(sqlitePath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -68,8 +76,8 @@ func run() error {
 		SetConnectRetry(true).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			log.Printf("connected to broker %s, subscribing", broker)
-			c.Subscribe(telemetry.StatusWildcard, 1, onStatus(reg))
-			c.Subscribe(telemetry.DataWildcard, 1, onData(reg))
+			c.Subscribe(telemetry.StatusWildcard, 1, onStatus(reg, st))
+			c.Subscribe(telemetry.DataWildcard, 1, onData(reg, st))
 		})
 
 	client := mqtt.NewClient(opts)
@@ -81,15 +89,27 @@ func run() error {
 	dashCfg := dashboard.Config{WebsockifyPort: websockifyPort, SSHUser: sshUser}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := dashboard.Render(w, reg.List(), dashCfg); err != nil {
+		if err := dashboard.Render(w, listWithMeta(reg, st), dashCfg); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
-	mux.HandleFunc("/api/devices", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/devices", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(reg.List())
+		json.NewEncoder(w).Encode(listWithMeta(reg, st))
+	})
+	mux.HandleFunc("POST /devices/{tenant}/{device}/rename", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tenant, device := r.PathValue("tenant"), r.PathValue("device")
+		if err := st.SetDisplayName(tenant, device, r.FormValue("display_name")); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
 
 	addr := bindIP + ":" + httpPort
@@ -110,7 +130,23 @@ func run() error {
 	return nil
 }
 
-func onStatus(reg *registry.Registry) mqtt.MessageHandler {
+// listWithMeta merges the registry's live MQTT state with each device's
+// persisted identity metadata (display name, notes) from SQLite.
+func listWithMeta(reg *registry.Registry, st *store.Store) []registry.Device {
+	devices := reg.List()
+	for i := range devices {
+		meta, err := st.GetDevice(devices[i].TenantID, devices[i].DeviceID)
+		if err != nil {
+			log.Printf("store: lookup failed for %s/%s: %v", devices[i].TenantID, devices[i].DeviceID, err)
+			continue
+		}
+		devices[i].DisplayName = meta.DisplayName
+		devices[i].Notes = meta.Notes
+	}
+	return devices
+}
+
+func onStatus(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
 	return func(_ mqtt.Client, msg mqtt.Message) {
 		tenantID, deviceID, err := telemetry.ParseTopic(msg.Topic())
 		if err != nil {
@@ -119,10 +155,13 @@ func onStatus(reg *registry.Registry) mqtt.MessageHandler {
 		}
 		online := string(msg.Payload()) == telemetry.StatusOnline
 		reg.SetStatus(tenantID, deviceID, online)
+		if err := st.EnsureDevice(tenantID, deviceID); err != nil {
+			log.Printf("store: ensure device failed for %s/%s: %v", tenantID, deviceID, err)
+		}
 	}
 }
 
-func onData(reg *registry.Registry) mqtt.MessageHandler {
+func onData(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
 	return func(_ mqtt.Client, msg mqtt.Message) {
 		var p telemetry.Payload
 		if err := json.Unmarshal(msg.Payload(), &p); err != nil {
@@ -130,5 +169,8 @@ func onData(reg *registry.Registry) mqtt.MessageHandler {
 			return
 		}
 		reg.SetTelemetry(p)
+		if err := st.EnsureDevice(p.TenantID, p.DeviceID); err != nil {
+			log.Printf("store: ensure device failed for %s/%s: %v", p.TenantID, p.DeviceID, err)
+		}
 	}
 }

@@ -56,6 +56,17 @@ else
     echo "farsight-server: grafana already installed, leaving package as-is."
 fi
 
+# --- Grafana SQLite datasource plugin (reads the same device-identity DB
+# farsight-server writes to, see /var/lib/farsight/farsight.db below) ---
+if [ ! -d /var/lib/grafana/plugins/frser-sqlite-datasource ]; then
+    echo "farsight-server: installing Grafana SQLite datasource plugin..."
+    grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini \
+        plugins install frser-sqlite-datasource || \
+        echo "farsight-server: SQLite datasource plugin install failed, SQLite panels in Grafana won't work until fixed manually." >&2
+else
+    echo "farsight-server: Grafana SQLite datasource plugin already installed."
+fi
+
 # --- InfluxDB: bind loopback-only (only Grafana/Telegraf on this same host
 # need it, never a remote peer, so this doesn't need the Tailscale IP) ---
 INFLUX_NEEDS_RESTART=false
@@ -94,6 +105,39 @@ if [ ! -s "$TOKEN_FILE" ]; then
         echo "farsight-server: could not read InfluxDB token, Telegraf output will fail until $TOKEN_FILE is fixed manually." >&2
     fi
 fi
+TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || true)
+
+# --- farsight-server's own device-identity database. Created by
+# farsight-server itself on first start (see internal/store); the
+# directory just needs to exist first, and needs to end up readable by the
+# grafana user for the SQLite datasource plugin to query it directly. ---
+mkdir -p /var/lib/farsight
+
+# --- Grafana datasources: provisioned from a file, not the API — a real
+# install has no admin sitting at the Grafana UI to click through this, and
+# file provisioning is idempotent by name (re-running this just updates the
+# same two datasources in place). ---
+mkdir -p /etc/grafana/provisioning/datasources
+cat > /etc/grafana/provisioning/datasources/farsight.yaml <<EOF
+apiVersion: 1
+datasources:
+  - name: InfluxDB-Farsight
+    type: influxdb
+    access: proxy
+    url: http://127.0.0.1:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: farsight
+      defaultBucket: telemetry
+    secureJsonData:
+      token: ${TOKEN}
+  - name: SQLite-Farsight
+    type: frser-sqlite-datasource
+    access: proxy
+    jsonData:
+      path: /var/lib/farsight/farsight.db
+EOF
 
 # --- systemd: netconfig oneshot first, then the services that depend on it ---
 systemctl daemon-reload
@@ -108,6 +152,15 @@ for unit in mosquitto telegraf grafana-server farsight-server; do
         systemctl start "$unit" || echo "farsight-server: failed to start $unit, check 'journalctl -u $unit'." >&2
     fi
 done
+
+# farsight-server creates the SQLite file itself on first start (as root);
+# make it readable by the grafana user so its SQLite datasource plugin can
+# query it too. Give it a moment to actually exist first.
+for i in 1 2 3 4 5; do
+    [ -f /var/lib/farsight/farsight.db ] && break
+    sleep 1
+done
+chmod 644 /var/lib/farsight/farsight.db 2>/dev/null || true
 
 echo "farsight-server: install complete. Edit ${CONF} if needed. Dashboard and Grafana listen on this machine's Tailscale IP."
 

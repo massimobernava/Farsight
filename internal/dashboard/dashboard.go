@@ -42,12 +42,19 @@ var pageTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html
 <h1>Farsight — macchine registrate</h1>
 <table>
 <tr>
-  <th>Tenant</th><th>Device</th><th>Stato</th><th>IP Tailscale</th>
+  <th>Nome</th><th>Tenant</th><th>Device ID</th><th>Stato</th><th>IP Tailscale</th>
   <th>CPU%</th><th>RAM%</th><th>Disk%</th><th>x11vnc</th><th>websockify</th>
   <th>Accesso</th>
 </tr>
 {{range .Devices}}
 <tr>
+  <td>
+    <form method="post" action="/devices/{{.TenantID}}/{{.DeviceID}}/rename" style="display:flex;gap:0.3rem;">
+      <input type="text" name="display_name" value="{{.DisplayName}}" placeholder="{{.DeviceID}}"
+             style="width:9rem;background:#222;color:#eee;border:1px solid #444;padding:0.2rem;">
+      <button type="submit" style="background:#333;color:#eee;border:1px solid #555;cursor:pointer;">salva</button>
+    </form>
+  </td>
   <td>{{.TenantID}}</td>
   <td>{{.DeviceID}}</td>
   <td>{{if .Online}}<span class="online">● online</span>{{else}}<span class="offline">● offline</span>{{end}}</td>
@@ -67,7 +74,7 @@ var pageTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html
   </td>
 </tr>
 {{else}}
-<tr><td colspan="10" class="muted">Nessuna macchina ancora registrata.</td></tr>
+<tr><td colspan="11" class="muted">Nessuna macchina ancora registrata.</td></tr>
 {{end}}
 </table>
 </body>
