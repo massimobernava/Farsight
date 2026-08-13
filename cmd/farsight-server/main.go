@@ -7,10 +7,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -48,6 +54,8 @@ func run() error {
 	sshUser := cfg.Get("SSH_USER", "")
 	bindIface := cfg.Get("BIND_INTERFACE", "tailscale")
 	sqlitePath := cfg.Get("SQLITE_PATH", "/var/lib/farsight/farsight.db")
+	uploadDir := cfg.Get("UPLOAD_DIR", "/var/lib/farsight/uploads")
+	importersDir := cfg.Get("IMPORTERS_DIR", "/etc/farsight/importers")
 
 	st, err := store.Open(sqlitePath)
 	if err != nil {
@@ -126,6 +134,7 @@ func run() error {
 		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
+	mux.HandleFunc("POST /devices/{tenant}/{device}/upload", uploadHandler(st, uploadDir, importersDir))
 
 	addr := bindIP + ":" + httpPort
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -166,6 +175,91 @@ func listWithMeta(reg *registry.Registry, st *store.Store) []registry.Device {
 		devices[i].Attributes = attrs
 	}
 	return devices
+}
+
+const maxUploadBytes = 50 << 20 // 50MB
+
+// uploadHandler accepts an arbitrary file from a device, stores it under
+// uploadDir/<tenant>/<device>/, and — if one is configured — hands it off
+// to an external importer. Deliberately format-agnostic: this is the
+// generic "client pushes a file to the server" transport from
+// PROJECT_SPEC.md's Fase 2 note. farsight-server never parses file
+// contents itself; it only knows how to look one script up by extension
+// (importersDir/<ext, no dot>) and run it. No importer configured for an
+// extension — including proprietary, one-off, "not an official feature"
+// formats — means the file is simply saved and nothing else happens.
+func uploadHandler(st *store.Store, uploadDir, importersDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant, device := r.PathValue("tenant"), r.PathValue("device")
+
+		// path.Base strips any directory components from the caller-supplied
+		// name, so "../../etc/passwd" can't escape the per-device directory.
+		filename := path.Base(r.URL.Query().Get("filename"))
+		if filename == "" || filename == "." || filename == "/" {
+			http.Error(w, "missing or invalid ?filename=", http.StatusBadRequest)
+			return
+		}
+
+		dir := filepath.Join(uploadDir, tenant, device)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		dest := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().Unix(), filename))
+
+		f, err := os.Create(dest)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+		n, err := io.Copy(f, r.Body)
+		if err != nil {
+			os.Remove(dest)
+			http.Error(w, "upload too large or connection interrupted", http.StatusBadRequest)
+			return
+		}
+
+		if err := st.EnsureDevice(tenant, device); err != nil {
+			log.Printf("store: ensure device failed for %s/%s: %v", tenant, device, err)
+		}
+
+		log.Printf("upload: saved %d bytes to %s", n, dest)
+		go runImporter(importersDir, dest, tenant, device)
+
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, "saved %d bytes to %s\n", n, dest)
+	}
+}
+
+// runImporter looks up importersDir/<ext> (extension without the leading
+// dot, e.g. "dat" for a .dat file) and, if it exists and is executable,
+// runs it as: importer <file-path> <tenant> <device>. Whatever the script
+// does with that — parse it, push data via MQTT, ignore it — is entirely
+// up to whoever configured it; farsight-server just dispatches by
+// extension and logs the outcome.
+func runImporter(importersDir, filePath, tenant, device string) {
+	ext := strings.TrimPrefix(filepath.Ext(filePath), ".")
+	if ext == "" {
+		return
+	}
+	importer := filepath.Join(importersDir, ext)
+	if info, err := os.Stat(importer); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return // no importer configured for this extension, or not executable
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, importer, filePath, tenant, device)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("importer %s failed for %s: %v\n%s", importer, filePath, err, output)
+		return
+	}
+	log.Printf("importer %s succeeded for %s\n%s", importer, filePath, output)
 }
 
 func onStatus(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {

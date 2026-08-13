@@ -272,37 +272,38 @@ chiamate a API cloud esterne per funzionalità equivalenti).
 
 ---
 
-## Fase 2 — Roadmap futura (upload file client→server)
+## Upload file client→server + importer per estensione
 
-**Non da implementare nel prototipo attuale.** Direzione: sempre la macchina client che
-inizia l'invio (push), mai il server/control plane che va a prendere qualcosa sul client —
-stesso principio "peer non fa da proxy passivo" già usato per VNC/SSH, qui ribaltato: il
-server espone un endpoint, il client ci si connette quando ha qualcosa da mandare.
+**Implementato** (era pianificato come Fase 2, realizzato prima del previsto perché è servito
+per un caso reale — vedi sotto). Direzione: sempre la macchina client che inizia l'invio
+(push), mai il server/control plane che va a prendere qualcosa sul client — stesso principio
+"peer non fa da proxy passivo" già usato per VNC/SSH, qui ribaltato: il server espone un
+endpoint, il client ci si connette quando ha qualcosa da mandare.
 
-Due casi d'uso:
-1. **Backup** di file dal client verso il server.
-2. **Invio dati applicativi**: es. il software medico (LabVIEW) estrae informazioni dal proprio
-   DB locale e le invia al server per renderle visibili all'utente tramite Grafana — dati troppo
-   grossi o strutturati diversamente da un normale publish periodico via MQTT.
+`POST /devices/<tenant_id>/<device_id>/upload?filename=<nome>` su `farsight-server` (stesso
+HTTP server della dashboard, bindato solo su Tailscale). MQTT non è adatto a payload grossi,
+quindi canale HTTP separato, come previsto.
 
-### Vincolo di design
+**`farsight-server` non interpreta mai il contenuto del file.** Dopo il salvataggio cerca uno
+script eseguibile in `IMPORTERS_DIR/<estensione>` e, se esiste, lo lancia con
+`(percorso-file, tenant_id, device_id)` — punto di estensione generico per formato, non
+un parser specifico nel codice base. Dettagli in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#upload-file-e-importer).
 
-MQTT (usato per la telemetria) **non è adatto** a payload grossi: niente di quel percorso va
-riusato per file. Serve un canale HTTP separato, sempre client→server.
+Caso reale che ha guidato il design: un dispositivo oftalmico del parco macchine produce un
+formato `.dat` proprietario e non standardizzabile (header chiave:valore + tabella TSV — vedi
+[`examples/ophthalmic-tid-import/`](examples/ophthalmic-tid-import/), non installato dal
+pacchetto, deliberatamente fuori dal prodotto base). L'importer di esempio dimostra il mapping:
+valori puntuali (ID paziente, parametri intervento) → attributi → SQLite; tabella → telemetria
+→ InfluxDB — stessi due canali di qualunque publisher, nessuna feature nuova nel core.
 
-### Implicazioni per le scelte odierne
-
-- `farsight-server` ha già un HTTP server bindato solo su interfaccia Tailscale (la dashboard,
-  vedi Componente 2): un futuro endpoint tipo `/api/upload` ci si aggiunge senza refactoring,
-  stesso principio già seguito per il futuro `farsight-assistant`.
-- I file vanno taggati con `tenant_id`/`device_id` (stessi campi già usati in telemetria) per
-  poterli attribuire alla macchina di origine.
-- Se la libreria/CLI client per l'integrazione in LabVIEW (vedi sopra, binding C via Paho MQTT)
-  verrà realizzata, dovrà esporre anche un path di upload HTTP oltre al publish MQTT — non solo
-  telemetria a basso volume.
-- Dati bulk destinati a Grafana: valutare se instradarli via ingest diretto in InfluxDB (line
-  protocol) o come file grezzi con parsing lato server — decisione da prendere quando il caso
-  d'uso concreto sarà chiaro, non ora.
+**Limite noto, non risolto**: lo schema attributi attuale è "stato corrente della macchina"
+(una chiave = un valore, sovrascritto). Per dati come "ID paziente" questo va bene solo se un
+device fa un trattamento alla volta e non serve lo storico multi-paziente/multi-trattamento
+nella stessa vista — se in futuro serve interrogare "tutti i trattamenti passati di una
+macchina" con i loro attributi puntuali, serve una tabella dedicata (es.
+`device_records(tenant_id, device_id, record_id, ts, data_json)`), non l'estensione
+dell'attuale `device_attributes`. Da valutare quando il caso d'uso concreto lo richiede.
 
 ---
 
@@ -329,7 +330,7 @@ marchio/dominio prima dell'uso pubblico definitivo.
 - Assistente LLM locale (Ollama + RTX 5090) — vedi sezione "Fase 2 — Roadmap
   futura" sopra: non implementare ora, ma tenerne conto nelle scelte
   architetturali del control plane e dello schema telemetria
-- Upload file client→server (backup, dati bulk per Grafana) — vedi sezione
-  "Fase 2 — Roadmap futura (upload file client→server)" sopra: non
-  implementare ora, ma non chiudere l'HTTP server del control plane in modo
-  che aggiungerlo dopo richieda un refactoring
+- Storico multi-trattamento per dati puntuali (es. più pazienti nel tempo sulla stessa
+  macchina) — vedi limite noto in "Upload file client→server + importer per estensione"
+  sopra: l'upload file e il meccanismo importer sono già implementati, questo è il pezzo
+  rimasto fuori

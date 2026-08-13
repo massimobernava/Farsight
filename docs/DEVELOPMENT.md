@@ -155,9 +155,10 @@ int main(void) {
     farsight_client *c = farsight_connect_from_config(NULL); /* legge client.conf */
     if (!c) return 1;
 
-    farsight_publish_series(c, "cpu_percent", 12.5);       /* -> InfluxDB, storico */
-    farsight_publish_series(c, "patients_visited", 7);      /* -> InfluxDB, storico */
-    farsight_set_attribute(c, "firmware_version", "1.4.2"); /* -> SQLite, stato corrente */
+    farsight_publish_series(c, "cpu_percent", 12.5);            /* -> InfluxDB, storico */
+    farsight_publish_series(c, "patients_visited", 7);           /* -> InfluxDB, storico */
+    farsight_set_attribute_string(c, "firmware_version", "1.4.2"); /* -> SQLite, stato corrente */
+    farsight_set_attribute_double(c, "battery_voltage", 3.7);      /* -> SQLite, stato corrente */
 
     farsight_disconnect(c); /* pubblica anche status=offline, pulito */
     return 0;
@@ -165,5 +166,37 @@ int main(void) {
 ```
 
 `farsight_connect` pubblica subito `status=online` e imposta un Last Will MQTT su
-`status=offline` (stessa garanzia di `farsight-agent`). Compilato ed eseguito davvero contro il
-control plane, non solo scritto a mano — vedi [`sdk/c/example.c`](../sdk/c/example.c).
+`status=offline` — non c'è (né serve) una funzione pubblica per dichiararlo a mano: la
+connessione riuscita/persa È lo stato, stessa garanzia di `farsight-agent`. Compilato ed
+eseguito davvero contro il control plane, non solo scritto a mano — vedi
+[`sdk/c/example.c`](../sdk/c/example.c).
+
+## Upload file e importer
+
+Terzo canale, oltre a telemetria e attributi — per file interi, non singoli valori (backup,
+dataset grossi, formati proprietari che un dispositivo produce già così — vedi
+[PROJECT_SPEC.md "Fase 2"](../PROJECT_SPEC.md)):
+
+```
+POST /devices/<tenant_id>/<device_id>/upload?filename=<nome>
+```
+
+Corpo della richiesta = contenuto grezzo del file. Il server lo salva sotto
+`UPLOAD_DIR/<tenant>/<device>/<timestamp>-<nome>` (`server.conf`, default
+`/var/lib/farsight/uploads`).
+
+**`farsight-server` non interpreta mai il contenuto del file.** Dopo il salvataggio, cerca uno
+script eseguibile in `IMPORTERS_DIR/<estensione-senza-punto>` (default
+`/etc/farsight/importers/`, es. `IMPORTERS_DIR/dat` per un file `.dat`) e, se esiste, lo lancia:
+
+```
+<script> <percorso-file-salvato> <tenant_id> <device_id>
+```
+
+Nessun importer configurato per un'estensione → il file resta semplicemente salvato, nessun
+errore. Lo script è libero di fare qualunque cosa (tipicamente: parsare il file e pubblicare su
+MQTT con gli stessi meccanismi di uno qualunque publisher, vedi sopra) — è un punto di
+estensione generico, non una feature legata a un formato specifico. Vedi
+[`examples/ophthalmic-tid-import/`](../examples/ophthalmic-tid-import/) per un importer completo
+e funzionante (formato proprietario di un dispositivo oftalmico, deliberatamente **non**
+installato da questo pacchetto — proprietario/site-specific, non appartiene al prodotto base).

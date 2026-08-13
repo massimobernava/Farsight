@@ -27,3 +27,15 @@ BIND_INTERFACE=tailscale
 # SQLite database for persisted device identity (display name, notes) —
 # Grafana's SQLite datasource plugin reads the same file directly.
 SQLITE_PATH=/var/lib/farsight/farsight.db
+
+# Where files uploaded by clients (POST /devices/<tenant>/<device>/upload)
+# get saved, under <tenant>/<device>/.
+UPLOAD_DIR=/var/lib/farsight/uploads
+
+# After saving an upload, farsight-server looks for an executable named
+# after the file's extension (no dot) in this directory and runs it with
+# (file-path, tenant_id, device_id) — e.g. IMPORTERS_DIR/dat for a .dat
+# file. Nothing is installed here by default: farsight-server ships no
+# format-specific parsers, this is purely an extension point. See
+# docs/DEVELOPMENT.md and examples/ for a sample importer.
+IMPORTERS_DIR=/etc/farsight/importers

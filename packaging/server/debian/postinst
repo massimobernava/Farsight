@@ -120,7 +120,15 @@ fi
 # farsight-server itself on first start (see internal/store); the
 # directory just needs to exist first, and needs to end up readable by the
 # grafana user for the SQLite datasource plugin to query it directly. ---
-mkdir -p /var/lib/farsight
+mkdir -p /var/lib/farsight /var/lib/farsight/uploads
+
+# --- Extension point for file-upload importers (see UPLOAD_DIR/
+# IMPORTERS_DIR in server.conf) — empty by default, nothing shipped here.
+# An admin drops in an executable named after a file extension to handle
+# it; see examples/ in the repo for a sample (deliberately not installed
+# by this package — proprietary/site-specific formats don't belong in the
+# base product). ---
+mkdir -p /etc/farsight/importers
 
 # --- Grafana datasources: provisioned from a file, not the API — a real
 # install has no admin sitting at the Grafana UI to click through this, and
