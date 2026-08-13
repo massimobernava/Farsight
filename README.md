@@ -2,6 +2,8 @@
 
 ![build](https://github.com/massimobernava/Farsight/actions/workflows/build-deb.yml/badge.svg)
 
+*[English version](README.en.md)*
+
 Piattaforma di accesso remoto (desktop + SSH) e telemetria per un parco di macchine Ubuntu
 su VPN mesh Tailscale. Design completo e razionale delle scelte: [PROJECT_SPEC.md](PROJECT_SPEC.md).
 Istruzioni operative per Claude Code: [CLAUDE.md](CLAUDE.md).
