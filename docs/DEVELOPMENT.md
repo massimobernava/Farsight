@@ -91,20 +91,27 @@ multi-tenant via Organizations).
 - **Datasource Grafana provisionate da file**, non da chiamate API a mano (`postinst` scrive
   `/etc/grafana/provisioning/datasources/farsight.yaml` con token InfluxDB e path SQLite già
   compilati) — idempotente, un vero install non ha un admin che clicca nella UI di Grafana.
-- **Elenco macchine in Grafana: iframe, non pannello tabella nativo.** Il pannello tabella
-  nativo (datasource SQLite via plugin `frser-sqlite-datasource`) non renderizzava in modo
-  affidabile e non c'è modo di verificarlo da qui (nessun accesso browser in questo ambiente di
-  sviluppo — solo l'API `/api/ds/query`, che verifica la query, non il rendering del pannello).
-  Soluzione: un pannello Text/HTML con `<iframe src="http://<ip>:8080/">` — verificabile
-  end-to-end via `curl` contro `farsight-server` stesso. `GET /?device=<id>` filtra a una sola
-  macchina (usato dal pannello "Macchina" via `${device_id}`, interpolato da Grafana nell'URL
-  dell'iframe).
+- **Elenco macchine in Grafana: iframe, non pannello tabella nativo.** Un primo tentativo con
+  pannello tabella nativo (datasource SQLite) non renderizzava, e non c'è modo di verificarlo da
+  qui (nessun accesso browser in questo ambiente di sviluppo — solo l'API `/api/ds/query`, che
+  verifica la query, non il rendering del pannello). Soluzione per l'elenco macchine: un
+  pannello Text/HTML con `<iframe src="http://<ip>:8080/">` — verificabile end-to-end via `curl`
+  contro `farsight-server` stesso. `GET /?device=<id>` filtra a una sola macchina (usato dal
+  pannello "Macchina" via `${device_id}`, interpolato da Grafana nell'URL dell'iframe).
+- **Dashboard "Farsight - Trattamenti"** (esempio, non provisionata dal pacchetto — vedi
+  `examples/ophthalmic-tid-import/`): menu a tendina su `record_id`/paziente (query variabile
+  Grafana su `device_records` via SQLite, alias `__value`/`__text`), pannello dettaglio via
+  `json_extract(data_json, '$.campo')`, grafici InfluxDB filtrati sullo stesso `record_id`. Qui
+  **sì** un pannello tabella nativo — a differenza dell'elenco macchine sopra, non ancora
+  confermato visivamente (stesso limite: solo verificato via `/api/ds/query`, non il rendering
+  reale). Se non dovesse renderizzare, stessa soluzione: iframe verso una pagina servita da
+  `farsight-server`.
 
 ## Schema dati / integrare un publisher custom
 
 Il contratto client→server è solo "pubblica JSON su MQTT ai topic giusti" — non serve per
-forza far girare `farsight-agent`. Due topic distinti, per due tipi di dato diversi (nessuno
-dei due è "standard" o obbligatorio oltre all'identità):
+forza far girare `farsight-agent`. Tre topic distinti, per tre tipi di dato diversi (nessuno è
+"standard" o obbligatorio oltre all'identità):
 
 - `farsight/<tenant_id>/<device_id>/telemetry` — **serie temporale**, va in InfluxDB e si
   accumula nel tempo. Schema in [`internal/telemetry/telemetry.go`](../internal/telemetry/telemetry.go)
@@ -114,19 +121,29 @@ dei due è "standard" o obbligatorio oltre all'identità):
   server** per aggiungerne una nuova (vedi `packaging/server/usr/lib/farsight/server-netconfig.sh`).
   Nemmeno CPU/RAM/disco sono privilegiati: `farsight-agent` li manda perché è la sua funzione,
   ma sono solo voci come le altre dentro `metrics`, e sono disattivabili (`PUBLISH_TELEMETRY=false`
-  in `client.conf`).
+  in `client.conf`). `RecordID` (opzionale, tag InfluxDB) correla una serie con un record
+  specifico — vedi sotto.
 - `farsight/<tenant_id>/<device_id>/attributes` — **valore puntuale**, va in SQLite
-  (`internal/store`) e sovrascrive invece di accumulare (`Attribute` in telemetry.go: `key`/
-  `value`, sempre stringa). Per fatti sullo stato corrente: IP Tailscale, se il desktop è
-  raggiungibile, versione firmware, ecc. — mai una cosa di cui vuoi lo storico, altrimenti è
-  telemetria. `farsight-agent` pubblica qui `tailscale_ip` e un unico `desktop_available`
-  (true solo se sia x11vnc che websockify sono su — niente booleani tecnici separati esposti).
+  (`internal/store`, tabella `devices`) e sovrascrive invece di accumulare (`Attribute` in
+  telemetry.go: `key`/`value`, sempre stringa). Per fatti sullo **stato corrente della
+  macchina**: IP Tailscale, se il desktop è raggiungibile, versione firmware — mai qualcosa che
+  si ripete nel tempo e di cui vuoi tenere ogni occorrenza (per quello c'è Record, sotto).
+  `farsight-agent` pubblica qui `tailscale_ip` e un unico `desktop_available` (true solo se sia
+  x11vnc che websockify sono su — niente booleani tecnici separati esposti).
+- `farsight/<tenant_id>/<device_id>/records` — **occorrenza**, va in SQLite (tabella
+  `device_records`) e **accumula** — un record per `record_id`, mai sovrascritto da un altro
+  (`Record` in telemetry.go: `record_id` + `data`, oggetto JSON libero). Per cose che succedono
+  più volte nella vita di un device e di cui serve lo storico: un trattamento, una visita, un
+  paziente diverso ogni volta — un attributo sovrascriverebbe l'occorrenza precedente, un record
+  no. Un device tratta più di un paziente: non ha senso questo sistema senza uno storico
+  multi-trattamento, quindi questo canale esiste apposta. Publicare due volte lo stesso
+  `record_id` sostituisce quel record (retry idempotente), non crea una seconda voce.
 - `farsight/<tenant_id>/<device_id>/status` — retained, `online`/`offline` (guidato dal Last
   Will MQTT: se il processo muore senza disconnessione pulita, il broker stesso marca la
   macchina offline — non serve ripubblicarlo periodicamente).
 
 `tenant_id`/`device_id` restano gli unici identificatori richiesti su ogni topic: non serve un
-terzo ID per "che tipo di dato è", basta scegliere il topic giusto.
+quarto ID per "che tipo di dato è", basta scegliere il topic giusto.
 
 **Da CLI**, con `mosquitto_pub` (pacchetto `mosquitto-clients`):
 
@@ -140,25 +157,32 @@ mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/telemet
 # valore puntuale
 mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/attributes' -q 1 -m \
   '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"mia-macchina","key":"firmware_version","value":"1.4.2"}'
+
+# occorrenza (accumula, non sovrascrive)
+mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/records' -q 1 -m \
+  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"mia-macchina","record_id":"TREATMENT-042","data":{"patient_id":"PID-042"}}'
 ```
 
-**Da C**, con l'SDK in [`sdk/c/`](../sdk/c/) — wrapper minimo sopra Eclipse Paho MQTT C
-(`libpaho-mqtt-dev` su Ubuntu) che nasconde MQTT dietro poche funzioni con nomi propri, incluse
-lettura automatica di tenant/device da `client.conf` (dettagli nel
-[README dell'SDK](../sdk/c/README.md)):
+**Da C**, con l'SDK in [`sdk/c/`](../sdk/c/) — wrapper minimo sopra Eclipse Paho MQTT C e
+libcurl (`libpaho-mqtt-dev libcurl4-openssl-dev` su Ubuntu) che nasconde MQTT/HTTP dietro poche
+funzioni con nomi propri, incluse lettura automatica di tenant/device da `client.conf`
+(dettagli nel [README dell'SDK](../sdk/c/README.md)):
 
 ```c
-/* cc example.c farsight.c -o farsight-example -lpaho-mqtt3c */
+/* cc example.c farsight.c -o farsight-example -lpaho-mqtt3c -lcurl */
 #include "farsight.h"
 
 int main(void) {
     farsight_client *c = farsight_connect_from_config(NULL); /* legge client.conf */
     if (!c) return 1;
 
-    farsight_publish_series(c, "cpu_percent", 12.5);            /* -> InfluxDB, storico */
-    farsight_publish_series(c, "patients_visited", 7);           /* -> InfluxDB, storico */
+    farsight_publish_series(c, "cpu_percent", 12.5);              /* -> InfluxDB, storico */
     farsight_set_attribute_string(c, "firmware_version", "1.4.2"); /* -> SQLite, stato corrente */
-    farsight_set_attribute_double(c, "battery_voltage", 3.7);      /* -> SQLite, stato corrente */
+
+    farsight_field fields[] = {{"patient_id", "PID-042"}};
+    farsight_publish_record(c, "TREATMENT-042", fields, 1);        /* -> SQLite, accumula */
+
+    farsight_upload_file(c, 0, "/path/to/report.dat");             /* -> file sul server */
 
     farsight_disconnect(c); /* pubblica anche status=offline, pulito */
     return 0;
@@ -173,9 +197,8 @@ eseguito davvero contro il control plane, non solo scritto a mano — vedi
 
 ## Upload file e importer
 
-Terzo canale, oltre a telemetria e attributi — per file interi, non singoli valori (backup,
-dataset grossi, formati proprietari che un dispositivo produce già così — vedi
-[PROJECT_SPEC.md "Fase 2"](../PROJECT_SPEC.md)):
+Canale HTTP separato da MQTT — per file interi, non singoli valori (backup, dataset grossi,
+formati proprietari che un dispositivo produce già così):
 
 ```
 POST /devices/<tenant_id>/<device_id>/upload?filename=<nome>
@@ -183,7 +206,9 @@ POST /devices/<tenant_id>/<device_id>/upload?filename=<nome>
 
 Corpo della richiesta = contenuto grezzo del file. Il server lo salva sotto
 `UPLOAD_DIR/<tenant>/<device>/<timestamp>-<nome>` (`server.conf`, default
-`/var/lib/farsight/uploads`).
+`/var/lib/farsight/uploads`). Da C: `farsight_upload_file(client, http_port, path)` nell'SDK
+ufficiale (`sdk/c/`) — non serve gestire HTTP a mano, l'host è derivato dalla stessa connessione
+MQTT già aperta.
 
 **`farsight-server` non interpreta mai il contenuto del file.** Dopo il salvataggio, cerca uno
 script eseguibile in `IMPORTERS_DIR/<estensione-senza-punto>` (default

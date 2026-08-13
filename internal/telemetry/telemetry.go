@@ -3,17 +3,28 @@
 // (subscriber / InfluxDB+SQLite bridge). Keeping this in one place is what
 // keeps every side in sync as the schema evolves.
 //
-// Two distinct kinds of data travel over MQTT, on separate topics:
+// Three distinct kinds of data travel over MQTT, on separate topics:
 //
 //   - Telemetry (DataTopic): time-series samples, meant to accumulate in
 //     InfluxDB over time (CPU load, sensor readings, anything you'd graph
 //     against time). Nothing here is a fixed/required field beyond
 //     identity — not even CPU/RAM/disk are privileged; farsight-agent
 //     reports them the same way a custom publisher reports anything else.
-//   - Attributes (AttributesTopic): point-in-time facts about current
-//     state — a Tailscale IP, a service's up/down flag, a firmware
-//     version — that overwrite rather than accumulate, and belong in
-//     farsight-server's SQLite store, not InfluxDB.
+//     Optionally tagged with RecordID to correlate a burst of samples with
+//     a specific session/treatment (see Record below).
+//   - Attributes (AttributesTopic): point-in-time facts about a device's
+//     CURRENT state — a Tailscale IP, a service's up/down flag, a firmware
+//     version — that overwrite rather than accumulate. One value per key
+//     per device, always. Wrong tool for anything that repeats over time
+//     with each occurrence worth keeping (e.g. "which patient is being
+//     treated" — a device treats more than one patient over its life) —
+//     that's what Record is for.
+//   - Records (RecordsTopic): a self-contained snapshot of point values
+//     tied to one occurrence of something (one treatment session, one
+//     uploaded file) — accumulates like telemetry, but a JSON object per
+//     entry, not a single field. A device's attributes answer "what's true
+//     about this device right now"; its records answer "what happened,
+//     each time something happened."
 package telemetry
 
 import (
@@ -39,16 +50,22 @@ func AttributesTopic(tenantID, deviceID string) string {
 	return "farsight/" + tenantID + "/" + deviceID + "/attributes"
 }
 
+// RecordsTopic is the per-occurrence snapshot topic for a device.
+func RecordsTopic(tenantID, deviceID string) string {
+	return "farsight/" + tenantID + "/" + deviceID + "/records"
+}
+
 // Subscription wildcards for farsight-server to pick up every device.
 const (
 	StatusWildcard     = "farsight/+/+/status"
 	DataWildcard       = "farsight/+/+/telemetry"
 	AttributesWildcard = "farsight/+/+/attributes"
+	RecordsWildcard    = "farsight/+/+/records"
 )
 
 // ParseTopic extracts tenantID and deviceID from a concrete (non-wildcard)
 // "farsight/<tenant>/<device>/<kind>" topic, as delivered by the broker for
-// a StatusWildcard/DataWildcard/AttributesWildcard subscription.
+// any of the wildcard subscriptions above.
 func ParseTopic(topic string) (tenantID, deviceID string, err error) {
 	parts := strings.Split(topic, "/")
 	if len(parts) != 4 || parts[0] != "farsight" {
@@ -72,6 +89,7 @@ type Payload struct {
 	Timestamp time.Time          `json:"ts"`
 	TenantID  string             `json:"tenant_id"`
 	DeviceID  string             `json:"device_id"`
+	RecordID  string             `json:"record_id,omitempty"`
 	Metrics   map[string]float64 `json:"metrics,omitempty"`
 }
 
@@ -85,4 +103,20 @@ type Attribute struct {
 	DeviceID  string    `json:"device_id"`
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
+}
+
+// Record is the JSON body published on RecordsTopic — a snapshot of
+// point-in-time facts tied to one occurrence (one treatment session, one
+// uploaded file). RecordID identifies that occurrence and is the primary
+// key alongside tenant/device — publishing the same RecordID again
+// replaces that record (idempotent retry), it does not create a second
+// history entry the way telemetry would. Data is an open string-keyed bag,
+// same reasoning as Attribute.Value: no strict typing, numbers as text are
+// fine.
+type Record struct {
+	Timestamp time.Time         `json:"ts"`
+	TenantID  string            `json:"tenant_id"`
+	DeviceID  string            `json:"device_id"`
+	RecordID  string            `json:"record_id"`
+	Data      map[string]string `json:"data"`
 }

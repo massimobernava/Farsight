@@ -1,6 +1,7 @@
 #include "farsight.h"
 
 #include <MQTTClient.h>
+#include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,9 +12,11 @@ struct farsight_client {
     MQTTClient mqtt;
     char *tenant_id;
     char *device_id;
+    char *server_host; /* parsed from broker_url, reused for HTTP uploads */
     char *status_topic;
     char *data_topic;
     char *attributes_topic;
+    char *records_topic;
 };
 
 static char *build_topic(const char *tenant_id, const char *device_id, const char *kind) {
@@ -21,6 +24,23 @@ static char *build_topic(const char *tenant_id, const char *device_id, const cha
     char *topic = malloc(n);
     if (topic) snprintf(topic, n, "farsight/%s/%s/%s", tenant_id, device_id, kind);
     return topic;
+}
+
+/* "tcp://100.x.x.x:1883" -> "100.x.x.x". The HTTP control plane always
+ * lives on the same host as the MQTT broker in a real deployment (one
+ * farsight-server package installs both), so this is what
+ * farsight_upload_file uses — see its doc comment. */
+static char *extract_host(const char *broker_url) {
+    const char *start = strstr(broker_url, "://");
+    start = start ? start + 3 : broker_url;
+    const char *colon = strchr(start, ':');
+    size_t len = colon ? (size_t)(colon - start) : strlen(start);
+    char *host = malloc(len + 1);
+    if (host) {
+        memcpy(host, start, len);
+        host[len] = '\0';
+    }
+    return host;
 }
 
 /* Minimal KEY=VALUE reader matching internal/config.ParseFile's format:
@@ -93,10 +113,13 @@ farsight_client *farsight_connect(const char *broker_url,
 
     c->tenant_id = strdup(tenant_id);
     c->device_id = strdup(device_id);
+    c->server_host = extract_host(broker_url);
     c->status_topic = build_topic(tenant_id, device_id, "status");
     c->data_topic = build_topic(tenant_id, device_id, "telemetry");
     c->attributes_topic = build_topic(tenant_id, device_id, "attributes");
-    if (!c->tenant_id || !c->device_id || !c->status_topic || !c->data_topic || !c->attributes_topic) {
+    c->records_topic = build_topic(tenant_id, device_id, "records");
+    if (!c->tenant_id || !c->device_id || !c->server_host || !c->status_topic ||
+        !c->data_topic || !c->attributes_topic || !c->records_topic) {
         farsight_disconnect(c);
         return NULL;
     }
@@ -175,6 +198,83 @@ int farsight_set_attribute_double(farsight_client *c, const char *key, double va
     return farsight_set_attribute_string(c, key, value_str);
 }
 
+int farsight_publish_record(farsight_client *c, const char *record_id,
+                             const farsight_field *fields, int field_count) {
+    if (!c || !record_id || (field_count > 0 && !fields)) return -1;
+
+    char ts[32];
+    time_t now = time(NULL);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+
+    /* Build the payload incrementally: field_count is caller-controlled,
+     * a fixed-size buffer would silently truncate a large record. */
+    size_t cap = 512;
+    for (int i = 0; i < field_count; i++) {
+        cap += strlen(fields[i].key) + strlen(fields[i].value) + 8;
+    }
+    char *payload = malloc(cap);
+    if (!payload) return -1;
+
+    int n = snprintf(payload, cap,
+        "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\","
+        "\"record_id\":\"%s\",\"data\":{",
+        ts, c->tenant_id, c->device_id, record_id);
+
+    for (int i = 0; i < field_count; i++) {
+        n += snprintf(payload + n, cap - (size_t)n, "%s\"%s\":\"%s\"",
+                      i > 0 ? "," : "", fields[i].key, fields[i].value);
+    }
+    snprintf(payload + n, cap - (size_t)n, "}}");
+
+    int rc = publish(c, c->records_topic, payload, 0);
+    free(payload);
+    return rc;
+}
+
+/* fread-compatible: libcurl's default POST read callback expects a FILE*
+ * in CURLOPT_READDATA and calls fread itself when no CURLOPT_READFUNCTION
+ * is set, so no explicit callback is needed here. */
+int farsight_upload_file(farsight_client *c, int http_port, const char *file_path) {
+    if (!c || !file_path) return -1;
+    if (http_port <= 0) http_port = 8080;
+
+    const char *filename = strrchr(file_path, '/');
+    filename = filename ? filename + 1 : file_path;
+
+    FILE *f = fopen(file_path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char url[768];
+    snprintf(url, sizeof(url), "http://%s:%d/devices/%s/%s/upload?filename=%s",
+             c->server_host, http_port, c->tenant_id, c->device_id, filename);
+
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        fclose(f);
+        return -1;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_READDATA, f);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, size);
+
+    CURLcode res = curl_easy_perform(curl);
+    int result = -1;
+    if (res == CURLE_OK) {
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        result = (status >= 200 && status < 300) ? 0 : (int)status;
+    }
+
+    curl_easy_cleanup(curl);
+    fclose(f);
+    return result;
+}
+
 void farsight_disconnect(farsight_client *c) {
     if (!c) return;
     if (c->mqtt) {
@@ -184,8 +284,10 @@ void farsight_disconnect(farsight_client *c) {
     }
     free(c->tenant_id);
     free(c->device_id);
+    free(c->server_host);
     free(c->status_topic);
     free(c->data_topic);
     free(c->attributes_topic);
+    free(c->records_topic);
     free(c);
 }

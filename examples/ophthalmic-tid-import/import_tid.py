@@ -4,10 +4,12 @@
 Esempio di come un formato dati proprietario/interno (i file .dat prodotti
 da un dispositivo oftalmico — vedi data/TID-000001-000276-111125.dat nel
 repo per un file reale) può essere interpretato e caricato nel sistema
-esistente senza nessuna modifica al server: valori puntuali (paziente,
-parametri intervento) come attributi, la tabella come serie temporale —
-gli stessi due canali MQTT che usa qualunque publisher (vedi
-docs/DEVELOPMENT.md).
+esistente senza nessuna modifica al server: header (paziente, parametri
+intervento, punteggi) come UN record — accumula, non sovrascrive, perché
+una macchina tratta più di un paziente nella sua vita — e la tabella come
+serie temporale taggata con lo stesso record_id, così Grafana può filtrare
+entrambi per singolo trattamento. Gli stessi canali MQTT che usa qualunque
+publisher (vedi docs/DEVELOPMENT.md).
 
 Chiamato da farsight-server come importer (vedi uploadHandler in
 cmd/farsight-server/main.go): dopo un upload con estensione .dat, se
@@ -28,7 +30,10 @@ import time
 import json
 import paho.mqtt.publish as mqtt_publish
 
-# Chiavi header -> nome attributo (snake_case, quello che finisce in SQLite).
+# Chiave header che identifica il trattamento — diventa record_id.
+RECORD_ID_KEY = "TREATMENT ID"
+
+# Chiavi header -> nome campo nel record (snake_case).
 HEADER_MAP = {
     "DEVICE S/N": "device_sn",
     "DEVICE SW": "device_sw",
@@ -109,30 +114,38 @@ def leading_number(s):
 def import_file(path, broker, tenant_id, device_id):
     header, rows = parse(path)
 
-    # --- attributi: un messaggio per chiave, stesso schema dell'SDK C ---
-    attr_msgs = []
-    for header_key, attr_name in HEADER_MAP.items():
-        if header_key not in header:
-            continue
-        attr_msgs.append({
-            "topic": f"farsight/{tenant_id}/{device_id}/attributes",
-            "payload": json.dumps({
-                "ts": _now_iso(),
-                "tenant_id": tenant_id,
-                "device_id": device_id,
-                "key": attr_name,
-                "value": header[header_key],
-            }),
-        })
-    if attr_msgs:
-        mqtt_publish.multiple(attr_msgs, hostname=broker_host(broker), port=broker_port(broker))
-        print(f"published {len(attr_msgs)} attributes")
+    record_id = header.get(RECORD_ID_KEY)
+    if not record_id:
+        print(f"nessun '{RECORD_ID_KEY}' nel file, impossibile associare un trattamento", file=sys.stderr)
+        sys.exit(1)
 
-    # --- serie temporale: un messaggio telemetria per riga, timestamp
-    # ricostruito da TIME (s) ancorato a "adesso" (il file non contiene un
-    # orario di inizio trattamento reale, solo secondi trascorsi) ---
+    # --- record: UN messaggio con tutto l'header — accumula (record_id
+    # diverso ogni volta, un trattamento non sovrascrive il precedente) ---
+    data = {
+        field_name: header[header_key]
+        for header_key, field_name in HEADER_MAP.items()
+        if header_key in header
+    }
+    mqtt_publish.single(
+        f"farsight/{tenant_id}/{device_id}/records",
+        payload=json.dumps({
+            "ts": _now_iso(),
+            "tenant_id": tenant_id,
+            "device_id": device_id,
+            "record_id": record_id,
+            "data": data,
+        }),
+        hostname=broker_host(broker), port=broker_port(broker),
+    )
+    print(f"published record {record_id} with {len(data)} fields")
+
+    # --- serie temporale: un messaggio telemetria per riga, taggato con lo
+    # stesso record_id così Grafana può filtrare per singolo trattamento.
+    # Timestamp ricostruito da TIME (s) ancorato a "adesso" (il file non
+    # contiene un orario di inizio trattamento reale, solo secondi
+    # trascorsi) ---
     if not rows:
-        print("nessuna riga di tabella trovata, solo attributi caricati")
+        print("nessuna riga di tabella trovata, solo il record è stato caricato")
         return
 
     times = [leading_number(r.get("TIME (s)", "")) for r in rows]
@@ -161,12 +174,13 @@ def import_file(path, broker, tenant_id, device_id):
                 "ts": ts,
                 "tenant_id": tenant_id,
                 "device_id": device_id,
+                "record_id": record_id,
                 "metrics": metrics,
             }),
         })
 
     mqtt_publish.multiple(data_msgs, hostname=broker_host(broker), port=broker_port(broker))
-    print(f"published {len(data_msgs)} time-series samples")
+    print(f"published {len(data_msgs)} time-series samples (record_id={record_id})")
 
 
 def _now_iso():

@@ -1,6 +1,7 @@
-/* Farsight C SDK — publish telemetry/status to a Farsight server without
- * touching MQTT directly. Wraps Eclipse Paho MQTT C internally; link with
- * -lpaho-mqtt3c (see README in this directory).
+/* Farsight C SDK — publish telemetry/status/files to a Farsight server
+ * without touching MQTT or HTTP directly. Wraps Eclipse Paho MQTT C and
+ * libcurl internally; link with -lpaho-mqtt3c -lcurl (see README in this
+ * directory).
  */
 #ifndef FARSIGHT_H
 #define FARSIGHT_H
@@ -74,6 +75,51 @@ int farsight_set_attribute_string(farsight_client *client,
 int farsight_set_attribute_double(farsight_client *client,
                                    const char *key,
                                    double value);
+
+/* One key/value pair for farsight_publish_record. */
+typedef struct {
+    const char *key;
+    const char *value;
+} farsight_field;
+
+/* Publishes a full snapshot tied to one OCCURRENCE of something — one
+ * treatment session, one uploaded file, one visit — identified by
+ * record_id. Unlike an attribute (single current value per key,
+ * overwritten every time), records accumulate: a device that treats many
+ * patients over its life gets one record per treatment, all kept, all
+ * queryable later (Grafana: a record_id/patient dropdown backed by this
+ * table — see docs/DEVELOPMENT.md). Publishing the same record_id again
+ * replaces that one record (idempotent retry), not a new history entry.
+ *
+ * fields: array of field_count key/value pairs, the record's data. Same
+ * escaping rule as farsight_set_attribute_string: no unescaped quotes or
+ * backslashes in keys or values.
+ *
+ * Returns 0 on success. */
+int farsight_publish_record(farsight_client *client,
+                             const char *record_id,
+                             const farsight_field *fields,
+                             int field_count);
+
+/* Uploads a whole file to the server (backups, bulk/structured data too
+ * big or differently-shaped for farsight_publish_series/record — see
+ * PROJECT_SPEC.md "Upload file client→server"). Talks to farsight-server's
+ * HTTP control plane, not the MQTT broker — same host as broker_url
+ * (that's always true in a real deployment: one farsight-server package
+ * installs both), http_port is that host's HTTP_PORT from server.conf
+ * (pass 0 for the default, 8080).
+ *
+ * farsight-server only stores the file; whether anything happens to it
+ * next (parsing, pushing data back in via MQTT) depends on whether an
+ * importer is configured for that extension — see
+ * examples/ophthalmic-tid-import/ for a full example script it can hand
+ * the file to.
+ *
+ * Returns 0 on success (HTTP 2xx), -1 on transport failure, or the HTTP
+ * status code on a non-2xx response. */
+int farsight_upload_file(farsight_client *client,
+                          int http_port,
+                          const char *file_path);
 
 /* Publishes status=offline, disconnects, and frees the client. Safe to
  * call with NULL. */

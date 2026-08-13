@@ -294,16 +294,18 @@ Caso reale che ha guidato il design: un dispositivo oftalmico del parco macchine
 formato `.dat` proprietario e non standardizzabile (header chiave:valore + tabella TSV — vedi
 [`examples/ophthalmic-tid-import/`](examples/ophthalmic-tid-import/), non installato dal
 pacchetto, deliberatamente fuori dal prodotto base). L'importer di esempio dimostra il mapping:
-valori puntuali (ID paziente, parametri intervento) → attributi → SQLite; tabella → telemetria
-→ InfluxDB — stessi due canali di qualunque publisher, nessuna feature nuova nel core.
+header (ID paziente, parametri intervento, punteggi) → **un record** (accumula, non
+sovrascrive) → SQLite; tabella → telemetria, taggata con lo stesso `record_id` → InfluxDB —
+stessi canali di qualunque publisher, nessuna feature specifica del formato nel core.
 
-**Limite noto, non risolto**: lo schema attributi attuale è "stato corrente della macchina"
-(una chiave = un valore, sovrascritto). Per dati come "ID paziente" questo va bene solo se un
-device fa un trattamento alla volta e non serve lo storico multi-paziente/multi-trattamento
-nella stessa vista — se in futuro serve interrogare "tutti i trattamenti passati di una
-macchina" con i loro attributi puntuali, serve una tabella dedicata (es.
-`device_records(tenant_id, device_id, record_id, ts, data_json)`), non l'estensione
-dell'attuale `device_attributes`. Da valutare quando il caso d'uso concreto lo richiede.
+**Storico multi-trattamento: risolto** con un terzo canale MQTT, `records`
+(`farsight/<tenant>/<device>/records`, tipo `Record` in `internal/telemetry`) — accumula un
+record per `record_id` in una tabella dedicata (`device_records`), a differenza degli attributi
+che sovrascrivono un solo valore corrente per chiave. Un device che tratta più pazienti nella
+sua vita ha un record per trattamento, tutti conservati. In Grafana: dashboard "Trattamenti"
+(esempio) con menu a tendina su `record_id`/paziente, dati e grafici filtrati per singolo
+trattamento (`record_id` è anche un tag InfluxDB opzionale sulla telemetria, per correlare le
+due cose).
 
 ---
 
@@ -330,7 +332,3 @@ marchio/dominio prima dell'uso pubblico definitivo.
 - Assistente LLM locale (Ollama + RTX 5090) — vedi sezione "Fase 2 — Roadmap
   futura" sopra: non implementare ora, ma tenerne conto nelle scelte
   architetturali del control plane e dello schema telemetria
-- Storico multi-trattamento per dati puntuali (es. più pazienti nel tempo sulla stessa
-  macchina) — vedi limite noto in "Upload file client→server + importer per estensione"
-  sopra: l'upload file e il meccanismo importer sono già implementati, questo è il pezzo
-  rimasto fuori

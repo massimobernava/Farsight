@@ -9,6 +9,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -54,6 +55,14 @@ func Open(path string) (*Store, error) {
 		value      TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (tenant_id, device_id, key)
+	);
+	CREATE TABLE IF NOT EXISTS device_records (
+		tenant_id  TEXT NOT NULL,
+		device_id  TEXT NOT NULL,
+		record_id  TEXT NOT NULL,
+		ts         TEXT NOT NULL,
+		data_json  TEXT NOT NULL,
+		PRIMARY KEY (tenant_id, device_id, record_id)
 	);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -136,6 +145,25 @@ func (s *Store) GetAttributes(tenantID, deviceID string) (map[string]string, err
 		out[k] = v
 	}
 	return out, rows.Err()
+}
+
+// SaveRecord upserts a full snapshot tied to one occurrence (recordID) —
+// unlike SetAttribute, this accumulates one row per distinct recordID
+// instead of overwriting a single current value; publishing the same
+// recordID again replaces just that occurrence (idempotent retry), not
+// history. data is stored as a JSON object (SQLite has no strict column
+// typing, and Grafana's SQLite plugin can query it with json_extract()).
+func (s *Store) SaveRecord(tenantID, deviceID, recordID string, ts time.Time, data map[string]string) error {
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO device_records (tenant_id, device_id, record_id, ts, data_json)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (tenant_id, device_id, record_id) DO UPDATE SET ts = excluded.ts, data_json = excluded.data_json`,
+		tenantID, deviceID, recordID, ts.UTC().Format(time.RFC3339), string(dataJSON))
+	return err
 }
 
 // GetDevice returns the persisted metadata for (tenantID, deviceID), or a

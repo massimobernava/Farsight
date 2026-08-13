@@ -87,6 +87,7 @@ func run() error {
 			c.Subscribe(telemetry.StatusWildcard, 1, onStatus(reg, st))
 			c.Subscribe(telemetry.DataWildcard, 1, onData(reg, st))
 			c.Subscribe(telemetry.AttributesWildcard, 1, onAttribute(reg, st))
+			c.Subscribe(telemetry.RecordsWildcard, 1, onRecord(reg, st))
 		})
 
 	client := mqtt.NewClient(opts)
@@ -304,6 +305,20 @@ func onAttribute(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
 		reg.Touch(a.TenantID, a.DeviceID)
 		if err := st.SetAttribute(a.TenantID, a.DeviceID, a.Key, a.Value); err != nil {
 			log.Printf("store: set attribute failed for %s/%s: %v", a.TenantID, a.DeviceID, err)
+		}
+	}
+}
+
+func onRecord(reg *registry.Registry, st *store.Store) mqtt.MessageHandler {
+	return func(_ mqtt.Client, msg mqtt.Message) {
+		var r telemetry.Record
+		if err := json.Unmarshal(msg.Payload(), &r); err != nil {
+			log.Printf("record: bad payload on %s: %v", msg.Topic(), err)
+			return
+		}
+		reg.Touch(r.TenantID, r.DeviceID)
+		if err := st.SaveRecord(r.TenantID, r.DeviceID, r.RecordID, r.Timestamp, r.Data); err != nil {
+			log.Printf("store: save record failed for %s/%s/%s: %v", r.TenantID, r.DeviceID, r.RecordID, err)
 		}
 	}
 }

@@ -60,6 +60,13 @@ cat > /etc/telegraf/telegraf.d/farsight.conf <<EOF
       path = "tenant_id"
     [[inputs.mqtt_consumer.json_v2.tag]]
       path = "device_id"
+    [[inputs.mqtt_consumer.json_v2.tag]]
+      # Optional: correlates a burst of telemetry with a specific
+      # record/session (see internal/telemetry.Payload.RecordID) — a
+      # device treats more than one patient over its life, so time series
+      # need to be filterable per occurrence, not just per device.
+      path = "record_id"
+      optional = true
     [[inputs.mqtt_consumer.json_v2.object]]
       # Every key under "metrics" becomes its own InfluxDB field
       # automatically, no config change needed per new metric name.
