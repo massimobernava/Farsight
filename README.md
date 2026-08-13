@@ -35,9 +35,21 @@ docker/                 Dockerfile + script per ambienti di test locali (systemd
 ### Via CI (consigliato)
 
 Ogni push su `main` compila entrambi i pacchetti in GitHub Actions
-(`.github/workflows/build-deb.yml`) e li pubblica come artifact (architettura `amd64`,
-quella dei runner GitHub-hosted). Per build `arm64` vedi sotto (Docker locale su Apple Silicon
-produce arm64 automaticamente).
+(`.github/workflows/build-deb.yml`) e li pubblica come **artifact della run** (architettura
+`amd64`, quella dei runner GitHub-hosted) — visibili in fondo alla pagina della run, sotto la
+tab **Actions** del repo, scaricabili come zip, non permanenti (scadono dopo 90 giorni). Non
+sono una Release GitHub.
+
+### Pubblicare una Release vera
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Il push di un tag `v*` fa partire `.github/workflows/release.yml`: builda entrambi i `.deb`
+(con quella versione, non `0.1.0` fissa) e crea una **Release** su GitHub con i pacchetti
+allegati — quella la trovi nella tab **Releases** del repo, non in Actions.
 
 ### In locale, dentro Docker (per test end-to-end reali)
 
@@ -108,6 +120,65 @@ essere raggiungibile solo sull'interfaccia Tailscale.
 Grafana — si impostano in `/etc/farsight/client.conf` (`TENANT_ID`, `DEVICE_ID`; quest'ultimo
 di default è l'hostname della macchina). Vanno tenuti stabili nel tempo: sono anche i tag
 InfluxDB usati per lo storico.
+
+### Pubblicare dati senza farsight-agent (CLI / C)
+
+Il contratto è solo "pubblica JSON su MQTT ai topic giusti" (vedi sopra): non serve per forza
+`farsight-agent` per comparire in dashboard/Grafana. Utile per integrare un software esistente
+(es. LabVIEW) senza far girare un processo esterno.
+
+**Da CLI**, con `mosquitto_pub` (pacchetto `mosquitto-clients`):
+
+```bash
+# stato online (retained — resta finché non lo si sovrascrive)
+mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/status' -r -q 1 -m 'online'
+
+# telemetria
+mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/mia-macchina/telemetry' -q 1 -m \
+  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"mia-macchina","cpu_percent":12.5,"mem_percent":40.2,"disk_percent":55.0,"service_x11vnc_up":true,"service_websockify_up":true}'
+```
+
+**Da C**, con Eclipse Paho MQTT C (`libpaho-mqtt-dev` su Ubuntu, si integra in un programma
+esistente via linking, es. LabVIEW via "Call Library Function Node" su una libreria che lo
+avvolge):
+
+```c
+/* cc farsight_publish.c -o farsight-publish -lpaho-mqtt3c */
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <MQTTClient.h>
+
+int main(int argc, char *argv[]) {
+    /* argv: <broker-url> <tenant_id> <device_id>, es. tcp://100.x.x.x:1883 default my-device */
+    MQTTClient client;
+    MQTTClient_create(&client, argv[1], "farsight-publish", MQTTCLIENT_PERSISTENCE_NONE, NULL);
+
+    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+    conn_opts.cleansession = 1;
+    MQTTClient_connect(client, &conn_opts);
+
+    char topic[256], payload[512], ts[32];
+    time_t now = time(NULL);
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
+    snprintf(topic, sizeof(topic), "farsight/%s/%s/telemetry", argv[2], argv[3]);
+    snprintf(payload, sizeof(payload),
+        "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\",\"cpu_percent\":0,"
+        "\"mem_percent\":0,\"disk_percent\":0,\"service_x11vnc_up\":false,"
+        "\"service_websockify_up\":false}", ts, argv[2], argv[3]);
+
+    MQTTClient_deliveryToken token;
+    MQTTClient_publish(client, topic, (int)strlen(payload), payload, 1, 0, &token);
+    MQTTClient_waitForCompletion(client, token, 5000);
+
+    MQTTClient_disconnect(client, 1000);
+    MQTTClient_destroy(&client);
+    return 0;
+}
+```
+
+I nomi dei campi devono restare sincronizzati con `internal/telemetry/telemetry.go`
+(`Payload`) — è lo schema condiviso da agent, control plane e Telegraf.
 
 ## Consultare i dati
 
