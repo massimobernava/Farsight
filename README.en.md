@@ -4,192 +4,58 @@
 
 *[Versione italiana](README.md)*
 
-Remote access (desktop + SSH) and telemetry platform for a fleet of Ubuntu machines on a
-Tailscale VPN mesh. Full design and rationale: [PROJECT_SPEC.md](PROJECT_SPEC.md) (Italian).
-Operating instructions for Claude Code: [CLAUDE.md](CLAUDE.md).
+Remote access (desktop + SSH) and monitoring for a fleet of Ubuntu machines, reachable only
+from your Tailscale network — never exposed publicly.
 
-Status: prototype. Client and server are validated end-to-end in a Docker environment with a
-real tailnet join (see below), not yet on production hardware.
-
-## Repo layout
-
-```
-cmd/farsight-agent/     client binary: MQTT telemetry
-cmd/farsight-server/    server binary: control plane / dashboard
-internal/               shared Go packages (config, telemetry, registry, ...)
-packaging/client/       client .deb sources (systemd unit, x11vnc/websockify wrappers, postinst)
-packaging/server/       server .deb sources (systemd unit, netconfig, postinst)
-docker/                 Dockerfile + scripts for local test environments (systemd-in-docker)
-.github/workflows/      CI: builds both .deb packages
-```
+Status: prototype.
 
 ## Requirements
 
-- Go 1.25+ (only for local builds outside Docker; CI uses the version pinned in `go.mod`)
-- Docker (for the local test environments)
-- A Tailscale account (free plan is fine) and an
-  [auth key](https://login.tailscale.com/admin/settings/keys) when you want to test a real
-  tailnet join
+- Both client and server machines must be part of the same Tailscale network.
+- If a machine doesn't already have Tailscale set up, you'll need an
+  [auth key](https://login.tailscale.com/admin/settings/keys) to join it during install.
 
-## Building the .deb packages
+## Installing the server
 
-### Via CI (recommended)
-
-Every push to `main` builds both packages in GitHub Actions
-(`.github/workflows/build-deb.yml`) and publishes them as a **run artifact** (`amd64`, the
-GitHub-hosted runners' architecture) — visible at the bottom of the run page, under the repo's
-**Actions** tab, downloadable as a zip, not permanent (expires after 90 days). This is not a
-GitHub Release.
-
-### Publishing an actual Release
+One dedicated machine, for monitoring (dashboard + Grafana).
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+export TS_AUTHKEY=tskey-auth-...   # only if this machine isn't already on Tailscale
+dpkg -i farsight-server_*.deb
 ```
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`: it builds both `.deb` packages
-(tagged with that version, not a fixed `0.1.0`) and creates a **Release** on GitHub with the
-packages attached — found under the repo's **Releases** tab, not Actions.
+The latest `.deb` is on the [Releases](https://github.com/massimobernava/Farsight/releases) page.
 
-### Locally, inside Docker (for real end-to-end testing)
+## Installing the client
 
-```bash
-# client environment: Ubuntu + systemd + Xvfb + tailscale + x11vnc + websockify + novnc
-./docker/run-client-test.sh
-docker exec -w /workspace farsight-client-test bash packaging/client/build.sh
-
-# server environment: Ubuntu + systemd + tailscale + mosquitto + telegraf + influxdb2 + grafana
-./docker/run-server-test.sh
-docker exec -w /workspace farsight-server-test bash packaging/server/build.sh
-```
-
-The `.deb` files land in `dist/` inside each container (bind-mounted from the repo's working
-directory, so also visible outside Docker at `./dist/`).
-
-## Installation (real machine or test container)
-
-### Client
+On every machine you want to monitor/control remotely.
 
 ```bash
-export TS_AUTHKEY=tskey-auth-...       # optional: without it, join manually with `tailscale up`
+export TS_AUTHKEY=tskey-auth-...   # only if this machine isn't already on Tailscale
 dpkg -i farsight-client_*.deb
 ```
 
-The installer (`packaging/client/debian/postinst`) is idempotent:
-- if Tailscale is already installed and authenticated, it's left untouched;
-- if missing, it's installed and authenticated with `TS_AUTHKEY` when present in the
-  environment;
-- x11vnc and websockify are bound **only** to the machine's Tailscale IP (never `0.0.0.0`),
-  resolved dynamically on every service start.
+Then edit `/etc/farsight/client.conf` and set:
+- `MQTT_BROKER` — the server's Tailscale IP (e.g. `tcp://100.x.x.x:1883`)
+- `TENANT_ID` / `DEVICE_ID` — the name identifying this machine in the dashboard (`DEVICE_ID`
+  defaults to the hostname; fine to leave as-is if it's already meaningful)
 
-Then edit `/etc/farsight/client.conf` (in particular `MQTT_BROKER` with the server's Tailscale
-IP, and `TENANT_ID`/`DEVICE_ID` to identify the machine — see below) and restart:
+Then restart:
 
 ```bash
 systemctl restart farsight-agent farsight-x11vnc farsight-vnc-proxy
 ```
 
-### Server
+## Usage
 
-```bash
-export TS_AUTHKEY=tskey-auth-...       # same as the client
-dpkg -i farsight-server_*.deb
-```
-
-The postinst (`packaging/server/debian/postinst`) idempotently installs/detects Mosquitto,
-Telegraf, InfluxDB 2.x and Grafana (adding the official InfluxData/Grafana apt repos only if
-the packages aren't already present), runs InfluxDB's initial setup (org `farsight`, bucket
-`telemetry`, token saved to `/etc/farsight/influx_token`), and configures everything to be
-reachable only on the Tailscale interface.
-
-## How a client sends data to the server (MQTT)
-
-1. **Periodic telemetry** (`farsight-agent`, every `PUBLISH_INTERVAL_SECONDS`): publishes a
-   JSON payload to `farsight/<tenant_id>/<device_id>/telemetry` — schema in
-   [`internal/telemetry/telemetry.go`](internal/telemetry/telemetry.go) (`cpu_percent`,
-   `mem_percent`, `disk_percent`, `tailscale_ip`, local service status...).
-2. **Online/offline status**: a retained message on `farsight/<tenant_id>/<device_id>/status`,
-   driven by the MQTT Last Will — if the agent dies without a clean disconnect, the broker
-   itself marks the machine offline.
-3. On the server, **Telegraf** subscribes to `farsight/+/+/telemetry` and writes to InfluxDB
-   (config generated by `packaging/server/usr/lib/farsight/server-netconfig.sh`); the
-   **control plane** (`farsight-server`) subscribes to both topics and keeps an in-memory view
-   of every machine, with no database of its own (the MQTT retained messages are already the
-   persistence layer).
-
-`tenant_id`/`device_id` are the only fields identifying a machine in the dashboard and
-Grafana — set in `/etc/farsight/client.conf` (`TENANT_ID`, `DEVICE_ID`; the latter defaults to
-the machine's hostname). Keep them stable over time: they're also the InfluxDB tags used for
-history.
-
-### Publishing data without farsight-agent (CLI / C)
-
-The contract is just "publish JSON to MQTT on the right topics" (see above): you don't
-strictly need `farsight-agent` to show up in the dashboard/Grafana. Useful for integrating an
-existing piece of software (e.g. LabVIEW) without running a separate external process.
-
-**From the CLI**, with `mosquitto_pub` (`mosquitto-clients` package):
-
-```bash
-# online status (retained — stays until overwritten)
-mosquitto_pub -h <server-tailscale-ip> -t 'farsight/default/my-machine/status' -r -q 1 -m 'online'
-
-# telemetry
-mosquitto_pub -h <server-tailscale-ip> -t 'farsight/default/my-machine/telemetry' -q 1 -m \
-  '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"my-machine","cpu_percent":12.5,"mem_percent":40.2,"disk_percent":55.0,"service_x11vnc_up":true,"service_websockify_up":true}'
-```
-
-**From C**, with the Eclipse Paho MQTT C client (`libpaho-mqtt-dev` on Ubuntu; integrates into
-an existing program via linking, e.g. LabVIEW through a "Call Library Function Node" calling a
-wrapper library):
-
-```c
-/* cc farsight_publish.c -o farsight-publish -lpaho-mqtt3c */
-#include <stdio.h>
-#include <string.h>
-#include <time.h>
-#include <MQTTClient.h>
-
-int main(int argc, char *argv[]) {
-    /* argv: <broker-url> <tenant_id> <device_id>, e.g. tcp://100.x.x.x:1883 default my-device */
-    MQTTClient client;
-    MQTTClient_create(&client, argv[1], "farsight-publish", MQTTCLIENT_PERSISTENCE_NONE, NULL);
-
-    MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
-    conn_opts.cleansession = 1;
-    MQTTClient_connect(client, &conn_opts);
-
-    char topic[256], payload[512], ts[32];
-    time_t now = time(NULL);
-    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", gmtime(&now));
-    snprintf(topic, sizeof(topic), "farsight/%s/%s/telemetry", argv[2], argv[3]);
-    snprintf(payload, sizeof(payload),
-        "{\"ts\":\"%s\",\"tenant_id\":\"%s\",\"device_id\":\"%s\",\"cpu_percent\":0,"
-        "\"mem_percent\":0,\"disk_percent\":0,\"service_x11vnc_up\":false,"
-        "\"service_websockify_up\":false}", ts, argv[2], argv[3]);
-
-    MQTTClient_deliveryToken token;
-    MQTTClient_publish(client, topic, (int)strlen(payload), payload, 1, 0, &token);
-    MQTTClient_waitForCompletion(client, token, 5000);
-
-    MQTTClient_disconnect(client, 1000);
-    MQTTClient_destroy(&client);
-    return 0;
-}
-```
-
-Field names must stay in sync with `internal/telemetry/telemetry.go` (`Payload`) — it's the
-schema shared by the agent, the control plane, and Telegraf.
-
-## Viewing the data
-
-- **Control plane dashboard**: `http://<server-tailscale-ip>:8080/` — machine list,
-  online/offline status, direct link to each machine's noVNC desktop (`/api/devices` for JSON).
+- **Dashboard**: `http://<server-tailscale-ip>:8080/` — machine list, online/offline status,
+  direct link to each machine's remote desktop.
 - **Grafana**: `http://<server-tailscale-ip>:3000/` (first login `admin`/`admin`, then a
-  password change is required) — InfluxDB datasource already set up on the `telemetry` bucket.
-- **Remote desktop**: from the "Desktop" link in the dashboard, or directly
-  `http://<client-tailscale-ip>:6080/vnc.html` — peer-to-peer traffic inside the VPN, never
-  routed through the server (see the architectural principle in PROJECT_SPEC.md).
+  password change is required) — historical metrics.
 
-All of these addresses are reachable only from inside the tailnet.
+Both reachable only from inside the Tailscale network.
+
+## Documentation
+
+- [PROJECT_SPEC.md](PROJECT_SPEC.md) — design and architectural decisions (Italian)
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, test, release, for Farsight developers
