@@ -1,0 +1,12 @@
+#!/bin/bash
+# prerm for farsight-client. Intentionally never touches the Tailscale
+# install/auth state, on removal or purge — same "never touch it" principle
+# as postinst.
+set -e
+
+for unit in farsight-agent.service farsight-vnc-proxy.service farsight-x11vnc.service; do
+    systemctl stop "$unit" 2>/dev/null || true
+    systemctl disable "$unit" 2>/dev/null || true
+done
+
+exit 0

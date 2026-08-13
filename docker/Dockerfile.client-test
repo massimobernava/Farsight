@@ -1,0 +1,29 @@
+# Test environment for farsight-client.deb.
+# Runs systemd as PID 1 so the real farsight-agent / farsight-vnc-proxy units
+# can be started exactly as they would on a real Ubuntu machine. Must be run
+# with --privileged (or --cap-add SYS_ADMIN) and a cgroup mount — see
+# docker/run-client-test.sh.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        systemd systemd-sysv dbus \
+        xvfb x11vnc \
+        python3 python3-websockify novnc \
+        golang-go build-essential dpkg-dev debhelper \
+        curl ca-certificates gnupg lsb-release iproute2 procps sudo git \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Official Tailscale client (test scenario: NOT pre-installed, so the
+# installer's "detect existing install" branch can also be exercised by
+# skipping this line in a second test image if needed).
+RUN curl -fsSL https://tailscale.com/install.sh | sh
+
+# Reduce noise/failures from units that don't make sense in a container.
+RUN systemctl mask systemd-udevd.service systemd-udev-trigger.service \
+        sys-kernel-debug.mount sys-kernel-tracing.mount \
+        systemd-random-seed.service getty.target getty-static.service || true
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/lib/systemd/systemd"]

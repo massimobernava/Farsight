@@ -1,0 +1,114 @@
+#!/bin/bash
+# postinst for farsight-server. Idempotent: re-running dpkg -i on a machine
+# that already has some/all of Mosquitto, Telegraf, InfluxDB2 or Grafana
+# installed must not reconfigure or restart those from scratch — same
+# "detect, don't clobber" principle as the client package's Tailscale
+# handling.
+set -e
+
+CONF=/etc/farsight/server.conf
+
+echo "farsight-server: postinst"
+
+# --- Mosquitto (plain Ubuntu universe package, no extra repo needed) ---
+if ! dpkg -s mosquitto >/dev/null 2>&1; then
+    echo "farsight-server: installing mosquitto..."
+    apt-get update -qq
+    apt-get install -y mosquitto mosquitto-clients
+else
+    echo "farsight-server: mosquitto already installed, leaving package as-is."
+fi
+
+# --- InfluxData repo, shared by Telegraf + InfluxDB 2.x ---
+if ! dpkg -s telegraf >/dev/null 2>&1 || ! dpkg -s influxdb2 >/dev/null 2>&1; then
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://repos.influxdata.com/influxdata-archive.key \
+        | gpg --dearmor -o /etc/apt/keyrings/influxdata-archive.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main" \
+        > /etc/apt/sources.list.d/influxdata.list
+    apt-get update -qq
+fi
+
+if ! dpkg -s telegraf >/dev/null 2>&1; then
+    echo "farsight-server: installing telegraf..."
+    apt-get install -y telegraf
+else
+    echo "farsight-server: telegraf already installed, leaving package as-is."
+fi
+
+if ! dpkg -s influxdb2 >/dev/null 2>&1; then
+    echo "farsight-server: installing influxdb2..."
+    apt-get install -y influxdb2 influxdb2-cli
+else
+    echo "farsight-server: influxdb2 already installed, leaving package as-is."
+fi
+
+# --- Grafana repo + package ---
+if ! dpkg -s grafana >/dev/null 2>&1; then
+    echo "farsight-server: installing grafana..."
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
+        > /etc/apt/sources.list.d/grafana.list
+    apt-get update -qq
+    apt-get install -y grafana
+else
+    echo "farsight-server: grafana already installed, leaving package as-is."
+fi
+
+# --- InfluxDB: bind loopback-only (only Grafana/Telegraf on this same host
+# need it, never a remote peer, so this doesn't need the Tailscale IP) ---
+INFLUX_NEEDS_RESTART=false
+if ! grep -q '^http-bind-address' /etc/influxdb/config.toml 2>/dev/null; then
+    echo 'http-bind-address = "127.0.0.1:8086"' >> /etc/influxdb/config.toml
+    INFLUX_NEEDS_RESTART=true
+fi
+systemctl enable influxdb >/dev/null 2>&1 || true
+if systemctl is-active --quiet influxdb; then
+    [ "$INFLUX_NEEDS_RESTART" = true ] && systemctl restart influxdb
+else
+    systemctl start influxdb || true
+fi
+
+# --- InfluxDB one-time setup (org/bucket/token), idempotent ---
+for i in 1 2 3 4 5; do
+    influx ping >/dev/null 2>&1 && break
+    sleep 1
+done
+
+TOKEN_FILE=/etc/farsight/influx_token
+mkdir -p /etc/farsight
+if [ ! -s "$TOKEN_FILE" ]; then
+    if ! influx org list >/dev/null 2>&1; then
+        echo "farsight-server: running initial InfluxDB setup..."
+        PW=$(head -c24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
+        influx setup --username admin --password "$PW" --org farsight --bucket telemetry --force \
+            > /tmp/farsight-influx-setup.log 2>&1 || \
+            echo "farsight-server: influx setup failed, see /tmp/farsight-influx-setup.log" >&2
+    fi
+    TOKEN=$(grep -o 'token = "[^"]*"' /root/.influxdbv2/configs 2>/dev/null | head -1 | sed 's/token = "//;s/"$//')
+    if [ -n "$TOKEN" ]; then
+        umask 077
+        printf '%s' "$TOKEN" > "$TOKEN_FILE"
+    else
+        echo "farsight-server: could not read InfluxDB token, Telegraf output will fail until $TOKEN_FILE is fixed manually." >&2
+    fi
+fi
+
+# --- systemd: netconfig oneshot first, then the services that depend on it ---
+systemctl daemon-reload
+systemctl enable --now farsight-server-netconfig.service || \
+    echo "farsight-server: netconfig failed (no Tailscale IP yet?), run 'systemctl restart farsight-server-netconfig' once the machine has joined the tailnet." >&2
+
+for unit in mosquitto telegraf grafana-server farsight-server; do
+    systemctl enable "$unit" >/dev/null 2>&1 || true
+    if systemctl is-active --quiet "$unit"; then
+        systemctl restart "$unit" || echo "farsight-server: failed to restart $unit, check 'journalctl -u $unit'." >&2
+    else
+        systemctl start "$unit" || echo "farsight-server: failed to start $unit, check 'journalctl -u $unit'." >&2
+    fi
+done
+
+echo "farsight-server: install complete. Edit ${CONF} if needed. Dashboard and Grafana listen on this machine's Tailscale IP."
+
+exit 0

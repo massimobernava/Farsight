@@ -1,0 +1,19 @@
+# Build artifacts
+/bin/
+/dist/
+packaging/*/build/
+*.deb
+*.build
+*.buildinfo
+*.changes
+
+# Go
+*.test
+*.out
+
+# Local env / secrets
+.env
+*.authkey
+
+# OS
+.DS_Store

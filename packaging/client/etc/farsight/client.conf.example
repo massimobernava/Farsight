@@ -1,0 +1,37 @@
+# /etc/farsight/client.conf
+# Config file for farsight-client. Shipped as a debian conffile: local edits
+# survive package upgrades.
+
+# --- farsight-agent (telemetry) ---
+# MQTT broker URL of the central farsight-server, reachable over Tailscale.
+MQTT_BROKER=tcp://100.64.0.1:1883
+
+# Tenant/group this machine belongs to. Prototype phase: static, set by hand.
+TENANT_ID=default
+
+# Device identifier. Defaults to the machine hostname if left empty.
+DEVICE_ID=
+
+# How often to publish telemetry, in seconds.
+PUBLISH_INTERVAL_SECONDS=30
+
+# --- Tailscale ---
+# Coordination server for `tailscale up --login-server=...`. Leave empty to
+# use Tailscale's own official service. Point this at a Headscale instance
+# URL in the future to migrate off Tailscale SaaS without code changes.
+TS_LOGIN_SERVER=
+
+# --- x11vnc / websockify ---
+# Optional VNC password file (created with `x11vnc -storepasswd`). Leave
+# empty to run x11vnc without a password (VPN membership is the primary
+# access control per PROJECT_SPEC.md).
+VNC_PASSWORD_FILE=
+
+# X11 display x11vnc attaches to.
+X11_DISPLAY=:0
+
+# Local TCP port x11vnc listens on (Tailscale interface only).
+VNC_PORT=5900
+
+# Port websockify/noVNC listens on (Tailscale interface only).
+WEBSOCKIFY_PORT=6080

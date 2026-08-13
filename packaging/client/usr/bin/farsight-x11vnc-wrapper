@@ -1,0 +1,36 @@
+#!/bin/bash
+# Resolves the current Tailscale IP at start time and execs x11vnc bound
+# only to that interface, never 0.0.0.0. The Tailscale IP can change
+# (re-auth, key rotation); systemd's Restart=on-failure combined with the
+# agent-reported service state is the prototype-phase mitigation for that —
+# see PROJECT_SPEC.md.
+set -euo pipefail
+
+# shellcheck source=/etc/farsight/client.conf
+source /etc/farsight/client.conf
+
+TS_IP=$(tailscale ip -4 2>/dev/null | head -n1)
+if [ -z "$TS_IP" ]; then
+    echo "farsight-x11vnc-wrapper: no Tailscale IP available yet, aborting start" >&2
+    exit 1
+fi
+
+# x11vnc is built with IPv6 listening mode on by default and, on top of
+# -listen, opens a SEPARATE IPv6 wildcard [::]:port listener that -no6/
+# -noipv6 alone don't reliably suppress (observed still bound in testing).
+# -rfbportv6 -1 disables that second listener outright — belt-and-suspenders
+# with -no6/-noipv6, but it's the one that's actually deterministic. This
+# closes an otherwise-silent gap in the "Tailscale interface only" bind
+# requirement from PROJECT_SPEC.md.
+PASSWD_ARGS=(-nopw)
+if [ -n "${VNC_PASSWORD_FILE:-}" ] && [ -f "${VNC_PASSWORD_FILE}" ]; then
+    PASSWD_ARGS=(-rfbauth "${VNC_PASSWORD_FILE}")
+fi
+
+exec /usr/bin/x11vnc \
+    -display "${X11_DISPLAY:-:0}" \
+    -listen "$TS_IP" \
+    -rfbport "${VNC_PORT:-5900}" \
+    -rfbportv6 -1 -no6 -noipv6 \
+    "${PASSWD_ARGS[@]}" \
+    -forever -shared -noxdamage -noxrecord -noxfixes -quiet

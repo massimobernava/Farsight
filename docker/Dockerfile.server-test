@@ -1,0 +1,43 @@
+# Test environment for the farsight-server stack (Mosquitto, Telegraf as the
+# MQTT->InfluxDB bridge, InfluxDB 2.x, Grafana, and later farsight-server
+# itself). Runs systemd as PID 1, same rationale as Dockerfile.client-test —
+# see docker/run-server-test.sh for required run flags.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        systemd systemd-sysv dbus \
+        curl ca-certificates gnupg wget \
+        iproute2 procps sudo git \
+        golang-go build-essential dpkg-dev debhelper \
+        mosquitto mosquitto-clients \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# InfluxData repo (Telegraf + InfluxDB 2.x)
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://repos.influxdata.com/influxdata-archive.key \
+        | gpg --dearmor -o /etc/apt/keyrings/influxdata-archive.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main" \
+        > /etc/apt/sources.list.d/influxdata.list
+
+# Grafana repo
+RUN mkdir -p /etc/apt/keyrings && \
+    wget -q -O - https://apt.grafana.com/gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
+        > /etc/apt/sources.list.d/grafana.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        telegraf influxdb2 grafana \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Official Tailscale client, same as the client test image.
+RUN curl -fsSL https://tailscale.com/install.sh | sh
+
+RUN systemctl mask systemd-udevd.service systemd-udev-trigger.service \
+        sys-kernel-debug.mount sys-kernel-tracing.mount \
+        systemd-random-seed.service getty.target getty-static.service || true
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/lib/systemd/systemd"]

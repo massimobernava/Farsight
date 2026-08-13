@@ -1,0 +1,25 @@
+# /etc/farsight/server.conf
+# Config file for farsight-server. Shipped as a debian conffile: local edits
+# survive package upgrades.
+
+# --- farsight-server (control plane dashboard) ---
+# MQTT broker to subscribe to. Runs on the same host as Mosquitto, so the
+# loopback address is normally correct — the broker itself is the thing
+# bound to the Tailscale interface, not this client connection.
+MQTT_BROKER=tcp://127.0.0.1:1883
+
+# HTTP port for the dashboard (bound only on the Tailscale interface).
+HTTP_PORT=8080
+
+# Must match the client's WEBSOCKIFY_PORT (see /etc/farsight/client.conf on
+# clients) — used to build each device's noVNC link.
+WEBSOCKIFY_PORT=6080
+
+# Optional SSH username hint shown next to each device's IP. Leave empty to
+# just show the bare Tailscale IP.
+SSH_USER=
+
+# "tailscale" (default) binds the dashboard to this machine's Tailscale IP,
+# never 0.0.0.0, per PROJECT_SPEC.md. "loopback" is only for local debugging
+# without a tailnet.
+BIND_INTERFACE=tailscale

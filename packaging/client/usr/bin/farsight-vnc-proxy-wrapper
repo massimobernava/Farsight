@@ -1,0 +1,24 @@
+#!/bin/bash
+# websockify bridges noVNC (browser, WebSocket) to x11vnc (raw VNC TCP).
+# Bound only to the Tailscale interface, serving noVNC's static files from
+# the system novnc package so we don't have to vendor our own copy.
+set -euo pipefail
+
+# shellcheck source=/etc/farsight/client.conf
+source /etc/farsight/client.conf
+
+TS_IP=$(tailscale ip -4 2>/dev/null | head -n1)
+if [ -z "$TS_IP" ]; then
+    echo "farsight-vnc-proxy-wrapper: no Tailscale IP available yet, aborting start" >&2
+    exit 1
+fi
+
+NOVNC_WEB=/usr/share/novnc
+if [ ! -d "$NOVNC_WEB" ]; then
+    NOVNC_WEB=/usr/share/webapps/novnc
+fi
+
+exec /usr/bin/websockify \
+    --web="$NOVNC_WEB" \
+    "${TS_IP}:${WEBSOCKIFY_PORT:-6080}" \
+    "127.0.0.1:${VNC_PORT:-5900}"

@@ -1,0 +1,14 @@
+#!/bin/bash
+# prerm for farsight-server. Only stops/disables what this package itself
+# owns (farsight-server, the netconfig oneshot). Mosquitto/Telegraf/
+# InfluxDB/Grafana are left running — we don't know if they pre-existed
+# independently of this package, same "never touch what might not be ours"
+# principle as the client's Tailscale handling.
+set -e
+
+for unit in farsight-server.service farsight-server-netconfig.service; do
+    systemctl stop "$unit" 2>/dev/null || true
+    systemctl disable "$unit" 2>/dev/null || true
+done
+
+exit 0

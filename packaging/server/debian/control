@@ -1,0 +1,12 @@
+Package: farsight-server
+Version: __VERSION__
+Section: net
+Priority: optional
+Architecture: __ARCH__
+Depends: curl, ca-certificates, gnupg, iproute2, systemd
+Maintainer: Farsight <massimo.bernava@gmail.com>
+Description: Farsight control plane, telemetry broker and dashboards
+ Installs and manages Mosquitto (MQTT broker), Telegraf (MQTT->InfluxDB
+ bridge), InfluxDB 2.x, Grafana, and the farsight-server control plane
+ dashboard. All services are bound to the Tailscale interface only. See
+ PROJECT_SPEC.md in the farsight repository for the full design.
