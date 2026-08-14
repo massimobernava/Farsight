@@ -221,6 +221,19 @@ collegare il file a un record (vedi sotto). Da C:
 (`sdk/c/`) — non serve gestire HTTP a mano, l'host è derivato dalla stessa connessione MQTT già
 aperta, e `saved_filename_out` riceve il nome effettivo.
 
+**Per riprendersi il file** (es. mostrarlo come `<img>` in un pannello Grafana — un browser non
+legge il filesystem del server):
+
+```
+GET /devices/<tenant_id>/<device_id>/files/<nome-effettivo>
+```
+
+`Content-Type` dedotto dall'estensione (`image/jpeg` per `.jpg`, ecc.). Path traversal (`../`)
+bloccato su due livelli: Go pulisce il path e reindirizza prima che la richiesta arrivi
+all'handler, e l'handler stesso rifiuta esplicitamente `.`/`..` come nome file — verificato con
+`curl --path-as-is` (che bypassa la normalizzazione lato client, per testare il server per
+davvero).
+
 **`farsight-server` non interpreta mai il contenuto del file.** Dopo il salvataggio, cerca uno
 script eseguibile in `IMPORTERS_DIR/<estensione-senza-punto>` (default
 `/etc/farsight/importers/`, es. `IMPORTERS_DIR/dat` per un file `.dat`) e, se esiste, lo lancia:
@@ -254,10 +267,15 @@ farsight_field fields[] = {
 farsight_publish_record(c, saved_name, fields, 3); /* record_id = nome file, già unico */
 ```
 
-Query per recuperare tutti i file di un trattamento (0, 1 o N righe):
+Query per recuperare tutti i file di un trattamento (0, 1 o N righe), con l'URL già pronto per
+un pannello immagine (usa `device_id` dalla stessa riga, non fisso — il device che ha caricato
+il file):
 
 ```sql
-SELECT record_id, json_extract(data_json,'$.filename') as filename
+SELECT
+  record_id,
+  json_extract(data_json,'$.filename') as filename,
+  'http://<ip-tailscale-server>:8080/devices/default/' || device_id || '/files/' || json_extract(data_json,'$.filename') as image_url
 FROM device_records
 WHERE json_extract(data_json,'$.treatment_id') = '$record_id' AND json_extract(data_json,'$.kind') IS NOT NULL
 ```

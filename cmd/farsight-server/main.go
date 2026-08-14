@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -136,6 +137,7 @@ func run() error {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})
 	mux.HandleFunc("POST /devices/{tenant}/{device}/upload", uploadHandler(st, uploadDir, importersDir))
+	mux.HandleFunc("GET /devices/{tenant}/{device}/files/{filename}", filesHandler(uploadDir))
 
 	addr := bindIP + ":" + httpPort
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -196,7 +198,7 @@ func uploadHandler(st *store.Store, uploadDir, importersDir string) http.Handler
 		// path.Base strips any directory components from the caller-supplied
 		// name, so "../../etc/passwd" can't escape the per-device directory.
 		filename := path.Base(r.URL.Query().Get("filename"))
-		if filename == "" || filename == "." || filename == "/" {
+		if filename == "" || filename == "." || filename == ".." || filename == "/" {
 			http.Error(w, "missing or invalid ?filename=", http.StatusBadRequest)
 			return
 		}
@@ -258,6 +260,28 @@ func uploadHandler(st *store.Store, uploadDir, importersDir string) http.Handler
 		// linking this specific file to something (a treatment, ...).
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprintln(w, savedName)
+	}
+}
+
+// filesHandler serves back a file previously saved by uploadHandler — the
+// read side of the same generic, format-agnostic mechanism. Needed because
+// a browser (e.g. an <img> tag in a Grafana panel) can't read the server's
+// local filesystem directly; this is the only way anything outside the
+// server process gets the bytes back.
+func filesHandler(uploadDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant, device := r.PathValue("tenant"), r.PathValue("device")
+		filename := path.Base(r.PathValue("filename")) // no path traversal out of the device's own directory
+		if filename == "" || filename == "." || filename == ".." || filename == "/" {
+			http.Error(w, "invalid filename", http.StatusBadRequest)
+			return
+		}
+		filePath := filepath.Join(uploadDir, tenant, device, filename)
+
+		if ct := mime.TypeByExtension(filepath.Ext(filename)); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		http.ServeFile(w, r, filePath)
 	}
 }
 
