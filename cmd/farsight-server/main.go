@@ -58,7 +58,7 @@ func run() error {
 	sqlitePath := cfg.Get("SQLITE_PATH", "/var/lib/farsight/farsight.db")
 	uploadDir := cfg.Get("UPLOAD_DIR", "/var/lib/farsight/uploads")
 	importersDir := cfg.Get("IMPORTERS_DIR", "/etc/farsight/importers")
-	galleryTemplate := cfg.Get("GALLERY_TEMPLATE", "/etc/farsight/gallery.html.tmpl")
+	templatesDir := cfg.Get("TEMPLATES_DIR", "/etc/farsight/templates")
 
 	st, err := store.Open(sqlitePath)
 	if err != nil {
@@ -140,7 +140,8 @@ func run() error {
 	})
 	mux.HandleFunc("POST /devices/{tenant}/{device}/upload", uploadHandler(st, uploadDir, importersDir))
 	mux.HandleFunc("GET /devices/{tenant}/{device}/files/{filename}", filesHandler(uploadDir))
-	mux.HandleFunc("GET /records", recordsGalleryHandler(st, galleryTemplate))
+	mux.HandleFunc("GET /records", recordsGalleryHandler(st, templatesDir))
+	mux.HandleFunc("POST /templates/{name}", templateUploadHandler(templatesDir))
 
 	addr := bindIP + ":" + httpPort
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -288,35 +289,93 @@ func filesHandler(uploadDir string) http.HandlerFunc {
 	}
 }
 
-// recordsGalleryHandler renders every record matching ?field=<name>&
-// value=<val> — generic, no idea what field/value mean (a treatment ID
-// linking a topography image to a treatment record is one use, not the
-// only one). Meant to be embedded as a Grafana iframe panel, URL driven
-// by a dashboard variable — see docs/DEVELOPMENT.md.
-func recordsGalleryHandler(st *store.Store, templatePath string) http.HandlerFunc {
+// recordsGalleryHandler renders every record matching ALL of the given
+// ?filter.<field>=<value> query params (AND-ed, repeat for more — field
+// can be any device_records column or any key inside a record's data,
+// see store.FindRecordsByFilters) using the template named by
+// ?template=<name> (default "default"). Everything about what shows and
+// how is chosen by the caller — typically a Grafana iframe panel's URL,
+// built from dashboard variables — with zero farsight-server code or
+// config to touch for a new field, a new filter combination, or a new
+// look. See docs/DEVELOPMENT.md.
+func recordsGalleryHandler(st *store.Store, templatesDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		field := r.URL.Query().Get("field")
-		value := r.URL.Query().Get("value")
-		if field == "" || value == "" {
-			http.Error(w, "missing ?field= or ?value=", http.StatusBadRequest)
+		filters := map[string]string{}
+		for key, values := range r.URL.Query() {
+			if field, ok := strings.CutPrefix(key, "filter."); ok && len(values) > 0 {
+				filters[field] = values[0]
+			}
+		}
+		if len(filters) == 0 {
+			http.Error(w, "missing at least one ?filter.<field>=<value>", http.StatusBadRequest)
 			return
 		}
-		records, err := st.FindRecordsByField(field, value)
+
+		records, err := st.FindRecordsByFilters(filters)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Re-loaded on every request on purpose: editing this file is how
-		// the page's look is configured, and it should take effect on the
-		// next reload, not need a farsight-server restart.
+
+		templateName := path.Base(r.URL.Query().Get("template"))
+		if templateName == "" || templateName == "." || templateName == ".." || templateName == "/" {
+			templateName = "default"
+		}
+		templatePath := filepath.Join(templatesDir, templateName+".html.tmpl")
+
+		// Re-loaded on every request on purpose: uploading/editing this
+		// file is how the page's look is configured, and it should take
+		// effect on the next reload, not need a farsight-server restart.
 		t, err := gallery.LoadTemplate(templatePath)
 		if err != nil {
 			log.Printf("gallery: %s failed to load, using built-in default: %v", templatePath, err)
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := gallery.Render(w, t, field, value, records); err != nil {
+		if err := gallery.Render(w, t, filters, records); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
+	}
+}
+
+// templateUploadHandler saves the request body as
+// templatesDir/<name>.html.tmpl, OVERWRITING any existing template with
+// that name — unlike uploadHandler's uploads (which never collide, each
+// gets a unique generated name), a template is a named, intentionally
+// mutable resource: pushing "gallery" again means "update gallery," not
+// "add another one." Same generic idea as the rest of the upload surface:
+// from C, farsight_upload_template — no SSH/file access to the server
+// needed to add or change a page's look.
+func templateUploadHandler(templatesDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := path.Base(r.PathValue("name"))
+		if name == "" || name == "." || name == ".." || name == "/" {
+			http.Error(w, "invalid template name", http.StatusBadRequest)
+			return
+		}
+
+		if err := os.MkdirAll(templatesDir, 0o755); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		dest := filepath.Join(templatesDir, name+".html.tmpl")
+
+		f, err := os.Create(dest) // intentional overwrite
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+		n, err := io.Copy(f, r.Body)
+		if err != nil {
+			http.Error(w, "upload too large or connection interrupted", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("template: saved %d bytes to %s", n, dest)
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintln(w, name)
 	}
 }
 

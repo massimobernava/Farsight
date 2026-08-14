@@ -1,5 +1,5 @@
-// Package gallery renders a generic "here are the records matching this
-// field/value" page — no idea what the field means (a treatment ID, a
+// Package gallery renders a generic "here are the records matching these
+// filters" page — no idea what any filter field means (a treatment ID, a
 // patient ID, anything a caller chose), no idea whether a record has an
 // image attached or not. If a record's data has a "filename" key, it's
 // shown as an image (linking back to farsight-server's own /files/
@@ -8,12 +8,14 @@
 // in an iframe panel's URL) — nothing here is specific to any one use
 // case, see docs/DEVELOPMENT.md.
 //
-// The HTML layout itself is NOT compiled into this binary: it's loaded
-// from a template file on disk (server.conf: GALLERY_TEMPLATE) and
-// re-read on every request. Editing what a treatment/patient/whatever
-// page looks like is a text-file edit, not a farsight-server rebuild —
-// that's the whole point, this exists so presentation is configurable
-// the same way what-to-show already is (via the URL's field/value).
+// The HTML layout itself is NOT compiled into this binary: it's loaded by
+// name from a template file on disk (server.conf: TEMPLATES_DIR,
+// <name>.html.tmpl) and re-read on every request. Editing or adding a
+// page's look is a file, not a farsight-server rebuild — and since that
+// file can itself be pushed with the same generic upload mechanism
+// (POST /templates/<name>), not even a file *on the server you have to
+// go touch* — that's the whole point, presentation is configurable the
+// same way what-to-show already is (via the URL's filters).
 package gallery
 
 import (
@@ -25,20 +27,20 @@ import (
 )
 
 type pageData struct {
-	FieldName  string
-	FieldValue string
-	Records    []store.RecordMeta
+	Filters map[string]string
+	Records []store.RecordMeta
 }
 
-// DefaultTemplate is what ships in /etc/farsight/gallery.html.tmpl
-// (packaging/server/etc/farsight/gallery.html.tmpl) — also the fallback
-// LoadTemplate uses if that file is missing or fails to parse, so a bad
-// edit degrades to the built-in look instead of taking the endpoint down.
+// DefaultTemplate is what ships as templates/default.html.tmpl
+// (packaging/server/etc/farsight/templates/default.html.tmpl) — also the
+// fallback LoadTemplate uses if the requested file is missing or fails to
+// parse, so a bad edit degrades to the built-in look instead of taking
+// the endpoint down.
 const DefaultTemplate = `<!doctype html>
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<title>Farsight — Record: {{.FieldName}}={{.FieldValue}}</title>
+<title>Farsight — Record</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #111; color: #eee; }
   .record { border: 1px solid #333; border-radius: 6px; padding: 0.8rem; margin-bottom: 1rem; }
@@ -66,7 +68,7 @@ const DefaultTemplate = `<!doctype html>
   </table>
 </div>
 {{else}}
-<p class="muted">Nessun record con {{.FieldName}}={{.FieldValue}}.</p>
+<p class="muted">Nessun record trovato per questi filtri.</p>
 {{end}}
 </body>
 </html>
@@ -95,7 +97,7 @@ func LoadTemplate(templatePath string) (*template.Template, error) {
 }
 
 // Render executes an already-loaded template (see LoadTemplate) for the
-// given field/value match.
-func Render(w io.Writer, t *template.Template, fieldName, fieldValue string, records []store.RecordMeta) error {
-	return t.Execute(w, pageData{FieldName: fieldName, FieldValue: fieldValue, Records: records})
+// given filter set and matching records.
+func Render(w io.Writer, t *template.Template, filters map[string]string, records []store.RecordMeta) error {
+	return t.Execute(w, pageData{Filters: filters, Records: records})
 }

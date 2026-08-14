@@ -252,24 +252,17 @@ static size_t capture_response(char *ptr, size_t size, size_t nmemb, void *userd
     return size * nmemb; /* tell curl we "handled" the whole chunk either way */
 }
 
-int farsight_upload_file(farsight_client *c, int http_port, const char *file_path,
-                          char *saved_filename_out, size_t saved_filename_out_len) {
-    if (!c || !file_path) return -1;
-    if (http_port <= 0) http_port = 8080;
-    if (saved_filename_out && saved_filename_out_len > 0) saved_filename_out[0] = '\0';
-
-    const char *filename = strrchr(file_path, '/');
-    filename = filename ? filename + 1 : file_path;
-
+/* Shared by farsight_upload_file and farsight_upload_template: POST the
+ * contents of file_path to url, capturing the (short, text) response body
+ * into response_out if given. Returns 0 on 2xx, -1 on transport failure,
+ * else the HTTP status code. */
+static int http_post_file(const char *url, const char *file_path,
+                           char *response_out, size_t response_out_len) {
     FILE *f = fopen(file_path, "rb");
     if (!f) return -1;
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-
-    char url[768];
-    snprintf(url, sizeof(url), "http://%s:%d/devices/%s/%s/upload?filename=%s",
-             c->server_host, http_port, c->tenant_id, c->device_id, filename);
 
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -293,17 +286,44 @@ int farsight_upload_file(farsight_client *c, int http_port, const char *file_pat
         long status = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
         result = (status >= 200 && status < 300) ? 0 : (int)status;
-        if (result == 0 && saved_filename_out && saved_filename_out_len > 0) {
-            /* server responds with the saved filename + trailing newline */
+        if (result == 0 && response_out && response_out_len > 0) {
+            /* server responds with a short text answer + trailing newline */
             char *nl = strpbrk(response, "\r\n");
             if (nl) *nl = '\0';
-            snprintf(saved_filename_out, saved_filename_out_len, "%s", response);
+            snprintf(response_out, response_out_len, "%s", response);
         }
     }
 
     curl_easy_cleanup(curl);
     fclose(f);
     return result;
+}
+
+int farsight_upload_file(farsight_client *c, int http_port, const char *file_path,
+                          char *saved_filename_out, size_t saved_filename_out_len) {
+    if (!c || !file_path) return -1;
+    if (http_port <= 0) http_port = 8080;
+    if (saved_filename_out && saved_filename_out_len > 0) saved_filename_out[0] = '\0';
+
+    const char *filename = strrchr(file_path, '/');
+    filename = filename ? filename + 1 : file_path;
+
+    char url[768];
+    snprintf(url, sizeof(url), "http://%s:%d/devices/%s/%s/upload?filename=%s",
+             c->server_host, http_port, c->tenant_id, c->device_id, filename);
+
+    return http_post_file(url, file_path, saved_filename_out, saved_filename_out_len);
+}
+
+int farsight_upload_template(farsight_client *c, int http_port,
+                              const char *name, const char *file_path) {
+    if (!c || !name || !file_path) return -1;
+    if (http_port <= 0) http_port = 8080;
+
+    char url[768];
+    snprintf(url, sizeof(url), "http://%s:%d/templates/%s", c->server_host, http_port, name);
+
+    return http_post_file(url, file_path, NULL, 0);
 }
 
 void farsight_disconnect(farsight_client *c) {

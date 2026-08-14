@@ -11,10 +11,20 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+// recordTopLevelColumns are device_records' real SQL columns — anything
+// else in a filter is assumed to be a key inside data_json instead. Kept
+// as a fixed, small set on purpose: it's the only place that needs to
+// know the table's actual shape, everything data-side stays schema-less.
+var recordTopLevelColumns = map[string]bool{
+	"tenant_id": true, "device_id": true, "record_id": true, "ts": true,
+}
 
 type DeviceMeta struct {
 	TenantID    string
@@ -175,28 +185,57 @@ type RecordMeta struct {
 	Data     map[string]string
 }
 
-// FindRecordsByField returns every record (any tenant/device) whose data
-// has fieldName == fieldValue — e.g. every record linking back to a given
-// treatment via a "treatment_id" field. Generic on purpose: this package
-// has no idea what "treatment_id" means, it's just a key some caller
-// chose (see docs/DEVELOPMENT.md on records). fieldName is restricted to
-// letters/digits/underscore before use, even though it's passed as a bound
-// parameter (not SQL-injectable) — an unexpected JSON path expression
-// there would just be a confusing correctness bug, not a security issue,
-// but there's no reason to allow it.
-func (s *Store) FindRecordsByField(fieldName, fieldValue string) ([]RecordMeta, error) {
-	for _, r := range fieldName {
-		if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
-			return nil, fmt.Errorf("store: invalid field name %q", fieldName)
+// FindRecordsByFilters returns every record (any tenant/device) matching
+// ALL of the given field=value pairs (AND-ed) — e.g. {"treatment_id": X,
+// "kind": "topography"} for just one category of file linked to one
+// treatment. A field can be one of device_records' real columns
+// (tenant_id, device_id, record_id, ts) or, for anything else, a key
+// inside data_json — same filter syntax either way, no code change needed
+// to filter on a new data field since that side is schema-less by design.
+// filters must be non-empty. Field names are restricted to
+// letters/digits/underscore before use: harmless either way (bound
+// parameters, not SQL-injectable — column names are the one exception,
+// see below), but an unexpected JSON path expression would just be a
+// confusing correctness bug for no reason.
+func (s *Store) FindRecordsByFilters(filters map[string]string) ([]RecordMeta, error) {
+	if len(filters) == 0 {
+		return nil, fmt.Errorf("store: at least one filter required")
+	}
+
+	// Sorted purely so the generated SQL (and therefore server logs) is
+	// deterministic across calls with the same filters — Go map iteration
+	// order isn't, but the AND-conjunction's meaning doesn't depend on it.
+	fields := make([]string, 0, len(filters))
+	for f := range filters {
+		fields = append(fields, f)
+	}
+	sort.Strings(fields)
+
+	var conditions []string
+	var args []any
+	for _, field := range fields {
+		for _, r := range field {
+			if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+				return nil, fmt.Errorf("store: invalid field name %q", field)
+			}
+		}
+		if recordTopLevelColumns[field] {
+			// field is validated alphanumeric/underscore above, so this
+			// concatenation can't smuggle in SQL syntax — it's still a
+			// real column name, not a bound value, which is the one
+			// place field names can't just be parameters.
+			conditions = append(conditions, field+" = ?")
+			args = append(args, filters[field])
+		} else {
+			conditions = append(conditions, "json_extract(data_json, ?) = ?")
+			args = append(args, "$."+field, filters[field])
 		}
 	}
 
-	rows, err := s.db.Query(`
-		SELECT tenant_id, device_id, record_id, data_json
-		FROM device_records
-		WHERE json_extract(data_json, ?) = ?
-		ORDER BY ts DESC`,
-		"$."+fieldName, fieldValue)
+	query := `SELECT tenant_id, device_id, record_id, data_json FROM device_records WHERE ` +
+		strings.Join(conditions, " AND ") + ` ORDER BY ts DESC`
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

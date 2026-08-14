@@ -47,6 +47,11 @@ int main(int argc, char *argv[]) {
     }
     */
 
+    /* Template: how GET /records renders — a named, overwritable resource,
+     * not tied to any one device/record. Push once, then any Grafana panel
+     * can select it with ?template=single (see docs/DEVELOPMENT.md). */
+    /* farsight_upload_template(c, 0, "single", "/path/to/single.html.tmpl"); */
+
     printf("published for %s/%s\n", argv[2], argv[3]);
 
     farsight_disconnect(c);

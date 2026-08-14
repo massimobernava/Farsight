@@ -1,19 +1,21 @@
 {{/*
-  Template della pagina "galleria record" servita da GET /records (vedi
-  docs/DEVELOPMENT.md). Modifica questo file per cambiare come appare la
-  pagina — non serve toccare il codice di farsight-server, viene riletto
-  a ogni richiesta.
+  Template di default per GET /records (vedi docs/DEVELOPMENT.md).
+  Modifica questo file, o caricane uno nuovo con un altro nome (POST
+  /templates/<nome>, anche da C con farsight_upload_template) e selezionalo
+  con ?template=<nome> nell'URL — non serve toccare il codice di
+  farsight-server, ogni file viene riletto a ogni richiesta.
 
   Variabili disponibili:
-    .FieldName, .FieldValue   il filtro passato nell'URL (?field=&value=)
-    .Records                  slice di record che matchano, ognuno con:
+    .Filters    map[string]string dei filtri passati nell'URL
+                (?filter.<campo>=<valore>, uno o più) — usa
+                {{index .Filters "campo"}}
+    .Records    slice di record che matchano tutti i filtri, ognuno con:
       .RecordID, .TenantID, .DeviceID
-      .Data                   map[string]string dei campi del record —
-                               usa {{index .Data "nomecampo"}}. Se esiste
-                               .Data.filename, è pensato per essere
-                               mostrato come immagine (link a
-                               /devices/<tenant>/<device>/files/<filename>,
-                               URL relativo, funziona da solo).
+      .Data     map[string]string dei campi del record — usa
+                {{index .Data "nomecampo"}}. Se esiste .Data.filename, è
+                pensato per essere mostrato come immagine (link a
+                /devices/<tenant>/<device>/files/<filename>, URL relativo,
+                funziona da solo).
 
   Se questo file manca o non è un template valido, farsight-server usa
   automaticamente un template minimo integrato (nessun errore per
@@ -23,7 +25,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<title>Farsight — Record: {{.FieldName}}={{.FieldValue}}</title>
+<title>Farsight — Record</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #111; color: #eee; }
   .record { border: 1px solid #333; border-radius: 6px; padding: 0.8rem; margin-bottom: 1rem; }
@@ -51,7 +53,7 @@
   </table>
 </div>
 {{else}}
-<p class="muted">Nessun record con {{.FieldName}}={{.FieldValue}}.</p>
+<p class="muted">Nessun record trovato per questi filtri.</p>
 {{end}}
 </body>
 </html>

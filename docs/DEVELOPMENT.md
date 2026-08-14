@@ -267,52 +267,64 @@ farsight_field fields[] = {
 farsight_publish_record(c, saved_name, fields, 3); /* record_id = nome file, già unico */
 ```
 
-Query per recuperare tutti i file di un trattamento (0, 1 o N righe), con l'URL già pronto per
-un pannello tabella con cella "Image" (usa `tenant_id`/`device_id` dalla stessa riga, mai
-fissi — la macchina che ha caricato il file, non necessariamente quella che si sta guardando):
-
-```sql
-SELECT
-  record_id,
-  json_extract(data_json,'$.filename') as filename,
-  'http://<ip-tailscale-server>:8080/devices/' || tenant_id || '/' || device_id || '/files/' || json_extract(data_json,'$.filename') as image_url
-FROM device_records
-WHERE json_extract(data_json,'$.treatment_id') = '$record_id' AND json_extract(data_json,'$.kind') IS NOT NULL
-```
-
-Funziona (cella tabella → field override → Cell type: Image), ma le miniature restano piccole,
-dimensione cella — niente vera galleria multi-immagine leggibile. Per quello:
+Un pannello tabella nativo Grafana con cella "Image" (query SQL a mano con `json_extract` +
+concatenazione dell'URL `/files/...`) funziona, ma le miniature restano dimensione-cella —
+niente vera galleria multi-immagine leggibile. Per quello, e per non dover riscrivere query SQL
+a mano ogni volta: un endpoint dedicato.
 
 ### Galleria via `GET /records` (endpoint generico)
 
 ```
-GET /records?field=<nome-campo>&value=<valore>
+GET /records?filter.<campo1>=<valore1>&filter.<campo2>=<valore2>&...&template=<nome>
 ```
 
-Restituisce una paginetta HTML con tutti i record dove `data.<nome-campo> == valore` — se un
-record ha un campo `filename` lo mostra come immagine (link a `/devices/.../files/...`,
-generato internamente, non serve saperlo lato Grafana), altrimenti mostra i suoi campi come
-tabella di testo. **Zero conoscenza del dominio nel codice**: non sa cos'è un "trattamento",
-gli si passa solo `field`/`value` — pensato apposta per essere pilotato da una variabile
+Restituisce una paginetta HTML con tutti i record che soddisfano **tutti** i filtri (AND) —
+`<campo>` può essere una colonna vera di `device_records` (`tenant_id`, `device_id`,
+`record_id`, `ts`) o, per qualunque altro nome, una chiave dentro `data` — stessa sintassi per
+entrambi i casi, zero codice nuovo per filtrare su un campo mai visto prima (i dati sono
+schema-less di proposito). Se un record ha un campo `filename` lo mostra come immagine (link a
+`/devices/.../files/...`, generato internamente, non serve saperlo lato Grafana), altrimenti
+mostra i suoi campi come tabella di testo.
+
+**Zero conoscenza del dominio nel codice**: non sa cos'è un "trattamento" né una "topografia",
+gli si passano solo coppie campo/valore — pensato apposta per essere pilotato da variabili
 dashboard Grafana via URL dell'iframe, senza toccare `cmd/farsight-server`:
 
 ```html
-<iframe src="http://<ip-tailscale-server>:8080/records?field=treatment_id&value=${record_id}"
+<!-- galleria completa di un trattamento -->
+<iframe src="http://<ip-tailscale-server>:8080/records?filter.treatment_id=${record_id}"
+        style="width:100%;height:100%;border:0;background:white;"></iframe>
+
+<!-- solo le topografie dello stesso trattamento, un pannello diverso -->
+<iframe src="http://<ip-tailscale-server>:8080/records?filter.treatment_id=${record_id}&filter.kind=topography&template=single"
         style="width:100%;height:100%;border:0;background:white;"></iframe>
 ```
 
-Cambiare cosa mostra (altro campo, altro valore) è una modifica alla dashboard Grafana, non al
-codice server — quello era già configurabile da subito. **Anche l'aspetto della pagina lo è**:
-il layout non è compilato nel binario, vive in `/etc/farsight/gallery.html.tmpl`
-(`server.conf`: `GALLERY_TEMPLATE`) e viene riletto **a ogni richiesta** — lo modifichi, salvi,
-ricarichi la pagina, cambiato, nessun riavvio di `farsight-server`. Template rotto (sintassi
-Go `html/template` non valida) → fallback silenzioso al template minimo integrato, errore
-solo nei log del server, mai un 500 all'utente. Variabili disponibili nel template:
-`.FieldName`, `.FieldValue`, `.Records` (ognuno con `.RecordID`, `.TenantID`, `.DeviceID`,
-`.Data` — mappa, usa `{{index .Data "chiave"}}`).
+(Il secondo esempio filtra anche per `kind` per escludere il record del trattamento stesso, che
+altrimenti matcherebbe comunque `treatment_id` se il suo `data` contiene già quella chiave
+puntata a se stessa — capita con l'importer di esempio, che mappa `TREATMENT ID` dall'header;
+non è un bug, solo un effetto collaterale di riusare lo stesso nome di campo per scopi diversi
+in record diversi.)
 
-Attenzione: senza il filtro su `kind` (o su un campo equivalente presente solo nei record-file),
-la query ripesca anche il record del trattamento stesso se il suo `data` contiene già un campo
-`treatment_id` che punta a se stesso (capita con l'importer di esempio, che mappa `TREATMENT ID`
-dall'header) — non è un bug, solo un effetto collaterale di usare lo stesso nome di campo per
-scopi diversi in record diversi.
+Cambiare cosa mostra (altri filtri) è una modifica alla dashboard Grafana, non al codice
+server. **Anche l'aspetto della pagina lo è, e non richiede accesso al server**:
+
+- Il layout non è compilato nel binario: vive per nome in `TEMPLATES_DIR/<nome>.html.tmpl`
+  (`server.conf`, default `/etc/farsight/templates/`, "default" usato quando `?template=` è
+  assente), riletto **a ogni richiesta** — modificalo, ricarica la pagina, cambiato, nessun
+  riavvio.
+- Un template nuovo (o l'aggiornamento di uno esistente) si carica con
+  `POST /templates/<nome>` — **da C, `farsight_upload_template(client, http_port, nome, path)`**,
+  stessa infrastruttura HTTP già usata per `farsight_upload_file`. A differenza degli upload di
+  dati/immagini (che non collidono mai, ogni file un nome nuovo), un template **sovrascrive**
+  per nome — è una risorsa che aggiorni, non un evento che accumuli.
+- Template mancante o con sintassi `html/template` non valida → fallback silenzioso al
+  template minimo integrato, errore solo nei log del server, mai un 500 all'utente.
+- Variabili disponibili in un template: `.Filters` (mappa dei `filter.*` passati nell'URL),
+  `.Records` (ognuno con `.RecordID`, `.TenantID`, `.DeviceID`, `.Data` — mappa, usa
+  `{{index .Data "chiave"}}`).
+
+Risultato: dati, immagini e presentazione passano tutti dallo stesso meccanismo generico
+"pusha una risorsa, riferiscila per nome/filtro" — mai bisogno di accedere al server, né da
+Grafana (che sceglie solo cambiando l'URL del pannello) né dal client (che pubblica tutto via
+HTTP/MQTT, mai un file da editare a mano).

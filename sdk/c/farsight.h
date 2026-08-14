@@ -133,6 +133,23 @@ int farsight_upload_file(farsight_client *client,
                           char *saved_filename_out,
                           size_t saved_filename_out_len);
 
+/* Pushes the HTML template at file_path to the server as <name>.html.tmpl
+ * (server.conf: TEMPLATES_DIR), for GET /records?...&template=<name> to
+ * use. Unlike farsight_upload_file, this OVERWRITES any existing template
+ * with the same name — a template is a named, deliberately mutable
+ * resource ("update the gallery layout"), not an accumulating record of
+ * uploads. This is how a page's *look* gets configured without ever
+ * touching the server's filesystem directly: push a template from here,
+ * point a Grafana panel's iframe at ?template=<name>, done — see
+ * docs/DEVELOPMENT.md and examples/ophthalmic-tid-import/.
+ *
+ * Returns 0 on success (HTTP 2xx), -1 on transport failure, or the HTTP
+ * status code on a non-2xx response. */
+int farsight_upload_template(farsight_client *client,
+                              int http_port,
+                              const char *name,
+                              const char *file_path);
+
 /* Publishes status=offline, disconnects, and frees the client. Safe to
  * call with NULL. */
 void farsight_disconnect(farsight_client *client);

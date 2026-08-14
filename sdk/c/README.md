@@ -20,7 +20,11 @@ nome — es. più immagini per un trattamento, upload uno via l'altro) e restitu
 in `saved_filename_out`: usalo per collegare il file a qualcos'altro con
 `farsight_publish_record` (un trattamento, ecc. — farsight-server non sa da solo "questo file
 appartiene a quel record", il collegamento lo costruisci tu con un campo nel record, es.
-`treatment_id`). E `farsight_connect_from_config` / `farsight_connect`, `farsight_disconnect`.
+`treatment_id`). Più `farsight_upload_template(client, http_port, name, path)` — stesso
+principio ma per il *layout* con cui `GET /records` mostra i dati (vedi
+[docs/DEVELOPMENT.md](../../docs/DEVELOPMENT.md)): sovrascrive per nome invece di accumulare
+(un template è una risorsa che aggiorni, non un evento che accumuli). E
+`farsight_connect_from_config` / `farsight_connect`, `farsight_disconnect`.
 
 Vedi [`farsight.h`](farsight.h) per i dettagli di ogni funzione e [`example.c`](example.c) per
 un uso completo. Per un esempio reale end-to-end (upload di un file, un importer server-side che

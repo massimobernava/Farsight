@@ -1,2 +1,2 @@
 /etc/farsight/server.conf
-/etc/farsight/gallery.html.tmpl
+/etc/farsight/templates/default.html.tmpl
