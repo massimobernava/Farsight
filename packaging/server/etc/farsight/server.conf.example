@@ -39,3 +39,10 @@ UPLOAD_DIR=/var/lib/farsight/uploads
 # format-specific parsers, this is purely an extension point. See
 # docs/DEVELOPMENT.md and examples/ for a sample importer.
 IMPORTERS_DIR=/etc/farsight/importers
+
+# HTML template for GET /records?field=&value= (shows records linked by
+# an arbitrary field — images, per-treatment data, ...). Edit this file to
+# change how that page looks; farsight-server re-reads it on every
+# request, no restart needed. Falls back to a built-in default if missing
+# or invalid.
+GALLERY_TEMPLATE=/etc/farsight/gallery.html.tmpl

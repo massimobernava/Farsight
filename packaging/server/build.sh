@@ -34,6 +34,7 @@ install -m 0644 "$PKG_SRC/lib/systemd/system/telegraf.service.d/farsight.conf" "
 install -m 0644 "$PKG_SRC/lib/systemd/system/grafana-server.service.d/farsight.conf" "$ROOT/lib/systemd/system/grafana-server.service.d/"
 
 install -m 0644 "$PKG_SRC/etc/farsight/server.conf.example" "$ROOT/etc/farsight/server.conf"
+install -m 0644 "$PKG_SRC/etc/farsight/gallery.html.tmpl" "$ROOT/etc/farsight/gallery.html.tmpl"
 
 install -m 0755 "$PKG_SRC/debian/postinst" "$ROOT/DEBIAN/postinst"
 install -m 0755 "$PKG_SRC/debian/prerm" "$ROOT/DEBIAN/prerm"

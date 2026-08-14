@@ -302,7 +302,14 @@ dashboard Grafana via URL dell'iframe, senza toccare `cmd/farsight-server`:
 ```
 
 Cambiare cosa mostra (altro campo, altro valore) è una modifica alla dashboard Grafana, non al
-codice server — esattamente il punto.
+codice server — quello era già configurabile da subito. **Anche l'aspetto della pagina lo è**:
+il layout non è compilato nel binario, vive in `/etc/farsight/gallery.html.tmpl`
+(`server.conf`: `GALLERY_TEMPLATE`) e viene riletto **a ogni richiesta** — lo modifichi, salvi,
+ricarichi la pagina, cambiato, nessun riavvio di `farsight-server`. Template rotto (sintassi
+Go `html/template` non valida) → fallback silenzioso al template minimo integrato, errore
+solo nei log del server, mai un 500 all'utente. Variabili disponibili nel template:
+`.FieldName`, `.FieldValue`, `.Records` (ognuno con `.RecordID`, `.TenantID`, `.DeviceID`,
+`.Data` — mappa, usa `{{index .Data "chiave"}}`).
 
 Attenzione: senza il filtro su `kind` (o su un campo equivalente presente solo nei record-file),
 la query ripesca anche il record del trattamento stesso se il suo `data` contiene già un campo

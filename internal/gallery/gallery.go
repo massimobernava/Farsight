@@ -7,11 +7,19 @@
 // Driven entirely by the caller (typically a Grafana dashboard variable
 // in an iframe panel's URL) — nothing here is specific to any one use
 // case, see docs/DEVELOPMENT.md.
+//
+// The HTML layout itself is NOT compiled into this binary: it's loaded
+// from a template file on disk (server.conf: GALLERY_TEMPLATE) and
+// re-read on every request. Editing what a treatment/patient/whatever
+// page looks like is a text-file edit, not a farsight-server rebuild —
+// that's the whole point, this exists so presentation is configurable
+// the same way what-to-show already is (via the URL's field/value).
 package gallery
 
 import (
 	"html/template"
 	"io"
+	"os"
 
 	"github.com/farsight/farsight/internal/store"
 )
@@ -22,7 +30,11 @@ type pageData struct {
 	Records    []store.RecordMeta
 }
 
-var pageTemplate = template.Must(template.New("gallery").Parse(`<!doctype html>
+// DefaultTemplate is what ships in /etc/farsight/gallery.html.tmpl
+// (packaging/server/etc/farsight/gallery.html.tmpl) — also the fallback
+// LoadTemplate uses if that file is missing or fails to parse, so a bad
+// edit degrades to the built-in look instead of taking the endpoint down.
+const DefaultTemplate = `<!doctype html>
 <html lang="it">
 <head>
 <meta charset="utf-8">
@@ -58,9 +70,32 @@ var pageTemplate = template.Must(template.New("gallery").Parse(`<!doctype html>
 {{end}}
 </body>
 </html>
-`))
+`
 
-// Render writes the gallery HTML page for the given field/value match.
-func Render(w io.Writer, fieldName, fieldValue string, records []store.RecordMeta) error {
-	return pageTemplate.Execute(w, pageData{FieldName: fieldName, FieldValue: fieldValue, Records: records})
+var defaultTemplate = template.Must(template.New("gallery").Parse(DefaultTemplate))
+
+// LoadTemplate reads and parses templatePath. On any problem (missing
+// file, bad syntax) it returns the built-in default template ALONGSIDE a
+// non-nil error describing why — callers should log that error but can
+// otherwise ignore it, the returned template is always safe to render
+// with. Pass "" to always get the built-in default with no error.
+func LoadTemplate(templatePath string) (*template.Template, error) {
+	if templatePath == "" {
+		return defaultTemplate, nil
+	}
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		return defaultTemplate, err
+	}
+	t, err := template.New("gallery").Parse(string(content))
+	if err != nil {
+		return defaultTemplate, err
+	}
+	return t, nil
+}
+
+// Render executes an already-loaded template (see LoadTemplate) for the
+// given field/value match.
+func Render(w io.Writer, t *template.Template, fieldName, fieldValue string, records []store.RecordMeta) error {
+	return t.Execute(w, pageData{FieldName: fieldName, FieldValue: fieldValue, Records: records})
 }

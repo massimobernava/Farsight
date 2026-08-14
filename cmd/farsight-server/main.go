@@ -58,6 +58,7 @@ func run() error {
 	sqlitePath := cfg.Get("SQLITE_PATH", "/var/lib/farsight/farsight.db")
 	uploadDir := cfg.Get("UPLOAD_DIR", "/var/lib/farsight/uploads")
 	importersDir := cfg.Get("IMPORTERS_DIR", "/etc/farsight/importers")
+	galleryTemplate := cfg.Get("GALLERY_TEMPLATE", "/etc/farsight/gallery.html.tmpl")
 
 	st, err := store.Open(sqlitePath)
 	if err != nil {
@@ -139,7 +140,7 @@ func run() error {
 	})
 	mux.HandleFunc("POST /devices/{tenant}/{device}/upload", uploadHandler(st, uploadDir, importersDir))
 	mux.HandleFunc("GET /devices/{tenant}/{device}/files/{filename}", filesHandler(uploadDir))
-	mux.HandleFunc("GET /records", recordsGalleryHandler(st))
+	mux.HandleFunc("GET /records", recordsGalleryHandler(st, galleryTemplate))
 
 	addr := bindIP + ":" + httpPort
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -292,7 +293,7 @@ func filesHandler(uploadDir string) http.HandlerFunc {
 // linking a topography image to a treatment record is one use, not the
 // only one). Meant to be embedded as a Grafana iframe panel, URL driven
 // by a dashboard variable — see docs/DEVELOPMENT.md.
-func recordsGalleryHandler(st *store.Store) http.HandlerFunc {
+func recordsGalleryHandler(st *store.Store, templatePath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		field := r.URL.Query().Get("field")
 		value := r.URL.Query().Get("value")
@@ -305,8 +306,15 @@ func recordsGalleryHandler(st *store.Store) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Re-loaded on every request on purpose: editing this file is how
+		// the page's look is configured, and it should take effect on the
+		// next reload, not need a farsight-server restart.
+		t, err := gallery.LoadTemplate(templatePath)
+		if err != nil {
+			log.Printf("gallery: %s failed to load, using built-in default: %v", templatePath, err)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := gallery.Render(w, field, value, records); err != nil {
+		if err := gallery.Render(w, t, field, value, records); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
