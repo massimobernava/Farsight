@@ -234,9 +234,29 @@ int farsight_publish_record(farsight_client *c, const char *record_id,
 /* fread-compatible: libcurl's default POST read callback expects a FILE*
  * in CURLOPT_READDATA and calls fread itself when no CURLOPT_READFUNCTION
  * is set, so no explicit callback is needed here. */
-int farsight_upload_file(farsight_client *c, int http_port, const char *file_path) {
+struct response_buf {
+    char *data;
+    size_t len;
+    size_t cap; /* leaves room for the trailing '\0' */
+};
+
+static size_t capture_response(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    struct response_buf *buf = (struct response_buf *)userdata;
+    size_t add = size * nmemb;
+    if (buf->len + add >= buf->cap) {
+        add = buf->cap - buf->len - 1; /* truncate rather than fail the upload */
+    }
+    memcpy(buf->data + buf->len, ptr, add);
+    buf->len += add;
+    buf->data[buf->len] = '\0';
+    return size * nmemb; /* tell curl we "handled" the whole chunk either way */
+}
+
+int farsight_upload_file(farsight_client *c, int http_port, const char *file_path,
+                          char *saved_filename_out, size_t saved_filename_out_len) {
     if (!c || !file_path) return -1;
     if (http_port <= 0) http_port = 8080;
+    if (saved_filename_out && saved_filename_out_len > 0) saved_filename_out[0] = '\0';
 
     const char *filename = strrchr(file_path, '/');
     filename = filename ? filename + 1 : file_path;
@@ -257,10 +277,15 @@ int farsight_upload_file(farsight_client *c, int http_port, const char *file_pat
         return -1;
     }
 
+    char response[512];
+    struct response_buf buf = { response, 0, sizeof(response) };
+
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_READDATA, f);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, size);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, capture_response);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
 
     CURLcode res = curl_easy_perform(curl);
     int result = -1;
@@ -268,6 +293,12 @@ int farsight_upload_file(farsight_client *c, int http_port, const char *file_pat
         long status = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
         result = (status >= 200 && status < 300) ? 0 : (int)status;
+        if (result == 0 && saved_filename_out && saved_filename_out_len > 0) {
+            /* server responds with the saved filename + trailing newline */
+            char *nl = strpbrk(response, "\r\n");
+            if (nl) *nl = '\0';
+            snprintf(saved_filename_out, saved_filename_out_len, "%s", response);
+        }
     }
 
     curl_easy_cleanup(curl);

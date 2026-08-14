@@ -206,12 +206,34 @@ func uploadHandler(st *store.Store, uploadDir, importersDir string) http.Handler
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		dest := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().Unix(), filename))
 
-		f, err := os.Create(dest)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		// O_EXCL makes the name collision-proof outright, rather than just
+		// unlikely: two uploads of the same filename landing in the same
+		// nanosecond (same device, rapid/looped uploads — e.g. several
+		// images for one treatment) would otherwise silently overwrite
+		// each other instead of erroring or retrying.
+		var f *os.File
+		var dest, savedName string
+		for attempt := 0; ; attempt++ {
+			if attempt > 100 {
+				http.Error(w, "could not allocate a unique filename", http.StatusInternalServerError)
+				return
+			}
+			if attempt == 0 {
+				savedName = fmt.Sprintf("%d-%s", time.Now().UnixNano(), filename)
+			} else {
+				savedName = fmt.Sprintf("%d-%d-%s", time.Now().UnixNano(), attempt, filename)
+			}
+			dest = filepath.Join(dir, savedName)
+			var err error
+			f, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if err == nil {
+				break
+			}
+			if !os.IsExist(err) {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		defer f.Close()
 
@@ -230,8 +252,12 @@ func uploadHandler(st *store.Store, uploadDir, importersDir string) http.Handler
 		log.Printf("upload: saved %d bytes to %s", n, dest)
 		go runImporter(importersDir, dest, tenant, device)
 
+		// Response body is just the saved filename (no path, no other
+		// text) so callers — including the C SDK — can use it as-is, e.g.
+		// as the record_id/reference for a farsight_publish_record call
+		// linking this specific file to something (a treatment, ...).
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprintf(w, "saved %d bytes to %s\n", n, dest)
+		fmt.Fprintln(w, savedName)
 	}
 }
 

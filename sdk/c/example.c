@@ -31,10 +31,21 @@ int main(int argc, char *argv[]) {
     };
     farsight_publish_record(c, "TREATMENT-DEMO-001", fields, 2);
 
-    /* Whole file — backups, bulk/structured data. See
-     * examples/ophthalmic-tid-import/ for a full worked example with a
-     * server-side importer. */
-    /* farsight_upload_file(c, 0, "/path/to/file.dat"); */
+    /* Whole file — backups, images, bulk/structured data. saved_name comes
+     * back from the server already de-duplicated; linking it to a
+     * treatment is just another record, not a built-in relationship —
+     * see examples/ophthalmic-tid-import/ for a full worked example. */
+    /*
+    char saved_name[256];
+    if (farsight_upload_file(c, 0, "/path/to/topography.jpg", saved_name, sizeof(saved_name)) == 0) {
+        farsight_field image_fields[] = {
+            {"filename", saved_name},
+            {"treatment_id", "TREATMENT-DEMO-001"},
+            {"kind", "topography"},
+        };
+        farsight_publish_record(c, saved_name, image_fields, 3);
+    }
+    */
 
     printf("published for %s/%s\n", argv[2], argv[3]);
 

@@ -182,7 +182,13 @@ int main(void) {
     farsight_field fields[] = {{"patient_id", "PID-042"}};
     farsight_publish_record(c, "TREATMENT-042", fields, 1);        /* -> SQLite, accumula */
 
-    farsight_upload_file(c, 0, "/path/to/report.dat");             /* -> file sul server */
+    /* Collegare un file (es. un'immagine) a un record esistente: upload,
+     * poi un record che lo referenzia — vedi examples/ophthalmic-tid-import/. */
+    char saved_name[256];
+    if (farsight_upload_file(c, 0, "/path/to/report.dat", saved_name, sizeof(saved_name)) == 0) {
+        farsight_field file_fields[] = {{"filename", saved_name}, {"treatment_id", "TREATMENT-042"}};
+        farsight_publish_record(c, saved_name, file_fields, 2);
+    }
 
     farsight_disconnect(c); /* pubblica anche status=offline, pulito */
     return 0;
@@ -205,10 +211,15 @@ POST /devices/<tenant_id>/<device_id>/upload?filename=<nome>
 ```
 
 Corpo della richiesta = contenuto grezzo del file. Il server lo salva sotto
-`UPLOAD_DIR/<tenant>/<device>/<timestamp>-<nome>` (`server.conf`, default
-`/var/lib/farsight/uploads`). Da C: `farsight_upload_file(client, http_port, path)` nell'SDK
-ufficiale (`sdk/c/`) — non serve gestire HTTP a mano, l'host è derivato dalla stessa connessione
-MQTT già aperta.
+`UPLOAD_DIR/<tenant>/<device>/<nome-effettivo>` (`server.conf`, default
+`/var/lib/farsight/uploads`) — il nome effettivo è generato con `O_EXCL` (creazione atomica,
+mai un nome già esistente: due upload dello stesso device con lo stesso nome file, anche
+simultanei, non si sovrascrivono mai), non solo un timestamp "probabilmente" unico. Il server
+risponde col nome effettivo (una riga di testo, niente altro) — è quello che poi si usa per
+collegare il file a un record (vedi sotto). Da C:
+`farsight_upload_file(client, http_port, path, saved_filename_out, out_len)` nell'SDK ufficiale
+(`sdk/c/`) — non serve gestire HTTP a mano, l'host è derivato dalla stessa connessione MQTT già
+aperta, e `saved_filename_out` riceve il nome effettivo.
 
 **`farsight-server` non interpreta mai il contenuto del file.** Dopo il salvataggio, cerca uno
 script eseguibile in `IMPORTERS_DIR/<estensione-senza-punto>` (default
@@ -225,3 +236,34 @@ estensione generico, non una feature legata a un formato specifico. Vedi
 [`examples/ophthalmic-tid-import/`](../examples/ophthalmic-tid-import/) per un importer completo
 e funzionante (formato proprietario di un dispositivo oftalmico, deliberatamente **non**
 installato da questo pacchetto — proprietario/site-specific, non appartiene al prodotto base).
+
+### Collegare un file (es. un'immagine) a un record
+
+`farsight-server` non ha un concetto built-in di "questo file appartiene a quel trattamento" —
+il collegamento si costruisce con un record che referenzia il nome file salvato:
+
+```c
+char saved_name[256];
+farsight_upload_file(c, 0, "/path/to/topography.jpg", saved_name, sizeof(saved_name));
+
+farsight_field fields[] = {
+    {"filename", saved_name},
+    {"treatment_id", "TID-000001-000276"}, /* record_id del trattamento a cui appartiene */
+    {"kind", "topography"},
+};
+farsight_publish_record(c, saved_name, fields, 3); /* record_id = nome file, già unico */
+```
+
+Query per recuperare tutti i file di un trattamento (0, 1 o N righe):
+
+```sql
+SELECT record_id, json_extract(data_json,'$.filename') as filename
+FROM device_records
+WHERE json_extract(data_json,'$.treatment_id') = '$record_id' AND json_extract(data_json,'$.kind') IS NOT NULL
+```
+
+Attenzione: senza il filtro su `kind` (o su un campo equivalente presente solo nei record-file),
+la query ripesca anche il record del trattamento stesso se il suo `data` contiene già un campo
+`treatment_id` che punta a se stesso (capita con l'importer di esempio, che mappa `TREATMENT ID`
+dall'header) — non è un bug, solo un effetto collaterale di usare lo stesso nome di campo per
+scopi diversi in record diversi.

@@ -6,6 +6,8 @@
 #ifndef FARSIGHT_H
 #define FARSIGHT_H
 
+#include <stddef.h> /* size_t */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -109,17 +111,27 @@ int farsight_publish_record(farsight_client *client,
  * installs both), http_port is that host's HTTP_PORT from server.conf
  * (pass 0 for the default, 8080).
  *
+ * farsight-server renames the file on save to guarantee it never collides
+ * with another upload (same device, two files with the same name — e.g.
+ * several images for one treatment, uploaded back to back) — the actual
+ * saved name is written into saved_filename_out (pass NULL if you don't
+ * need it). Typical use: upload an image, then farsight_publish_record
+ * with that filename plus a field linking it back to whatever it belongs
+ * to (a treatment's record_id, ...) — farsight-server has no built-in
+ * concept of "this file belongs to that record," records are how you
+ * build that link yourself. See examples/ophthalmic-tid-import/.
+ *
  * farsight-server only stores the file; whether anything happens to it
  * next (parsing, pushing data back in via MQTT) depends on whether an
- * importer is configured for that extension — see
- * examples/ophthalmic-tid-import/ for a full example script it can hand
- * the file to.
+ * importer is configured for that extension.
  *
  * Returns 0 on success (HTTP 2xx), -1 on transport failure, or the HTTP
  * status code on a non-2xx response. */
 int farsight_upload_file(farsight_client *client,
                           int http_port,
-                          const char *file_path);
+                          const char *file_path,
+                          char *saved_filename_out,
+                          size_t saved_filename_out_len);
 
 /* Publishes status=offline, disconnects, and frees the client. Safe to
  * call with NULL. */
