@@ -25,6 +25,7 @@ import (
 
 	"github.com/farsight/farsight/internal/config"
 	"github.com/farsight/farsight/internal/dashboard"
+	"github.com/farsight/farsight/internal/gallery"
 	"github.com/farsight/farsight/internal/registry"
 	"github.com/farsight/farsight/internal/store"
 	"github.com/farsight/farsight/internal/tailscaleip"
@@ -138,6 +139,7 @@ func run() error {
 	})
 	mux.HandleFunc("POST /devices/{tenant}/{device}/upload", uploadHandler(st, uploadDir, importersDir))
 	mux.HandleFunc("GET /devices/{tenant}/{device}/files/{filename}", filesHandler(uploadDir))
+	mux.HandleFunc("GET /records", recordsGalleryHandler(st))
 
 	addr := bindIP + ":" + httpPort
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -282,6 +284,31 @@ func filesHandler(uploadDir string) http.HandlerFunc {
 			w.Header().Set("Content-Type", ct)
 		}
 		http.ServeFile(w, r, filePath)
+	}
+}
+
+// recordsGalleryHandler renders every record matching ?field=<name>&
+// value=<val> — generic, no idea what field/value mean (a treatment ID
+// linking a topography image to a treatment record is one use, not the
+// only one). Meant to be embedded as a Grafana iframe panel, URL driven
+// by a dashboard variable — see docs/DEVELOPMENT.md.
+func recordsGalleryHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		field := r.URL.Query().Get("field")
+		value := r.URL.Query().Get("value")
+		if field == "" || value == "" {
+			http.Error(w, "missing ?field= or ?value=", http.StatusBadRequest)
+			return
+		}
+		records, err := st.FindRecordsByField(field, value)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := gallery.Render(w, field, value, records); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}
 }
 

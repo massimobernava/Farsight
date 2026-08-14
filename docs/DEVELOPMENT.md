@@ -268,17 +268,41 @@ farsight_publish_record(c, saved_name, fields, 3); /* record_id = nome file, gi�
 ```
 
 Query per recuperare tutti i file di un trattamento (0, 1 o N righe), con l'URL già pronto per
-un pannello immagine (usa `device_id` dalla stessa riga, non fisso — il device che ha caricato
-il file):
+un pannello tabella con cella "Image" (usa `tenant_id`/`device_id` dalla stessa riga, mai
+fissi — la macchina che ha caricato il file, non necessariamente quella che si sta guardando):
 
 ```sql
 SELECT
   record_id,
   json_extract(data_json,'$.filename') as filename,
-  'http://<ip-tailscale-server>:8080/devices/default/' || device_id || '/files/' || json_extract(data_json,'$.filename') as image_url
+  'http://<ip-tailscale-server>:8080/devices/' || tenant_id || '/' || device_id || '/files/' || json_extract(data_json,'$.filename') as image_url
 FROM device_records
 WHERE json_extract(data_json,'$.treatment_id') = '$record_id' AND json_extract(data_json,'$.kind') IS NOT NULL
 ```
+
+Funziona (cella tabella → field override → Cell type: Image), ma le miniature restano piccole,
+dimensione cella — niente vera galleria multi-immagine leggibile. Per quello:
+
+### Galleria via `GET /records` (endpoint generico)
+
+```
+GET /records?field=<nome-campo>&value=<valore>
+```
+
+Restituisce una paginetta HTML con tutti i record dove `data.<nome-campo> == valore` — se un
+record ha un campo `filename` lo mostra come immagine (link a `/devices/.../files/...`,
+generato internamente, non serve saperlo lato Grafana), altrimenti mostra i suoi campi come
+tabella di testo. **Zero conoscenza del dominio nel codice**: non sa cos'è un "trattamento",
+gli si passa solo `field`/`value` — pensato apposta per essere pilotato da una variabile
+dashboard Grafana via URL dell'iframe, senza toccare `cmd/farsight-server`:
+
+```html
+<iframe src="http://<ip-tailscale-server>:8080/records?field=treatment_id&value=${record_id}"
+        style="width:100%;height:100%;border:0;background:white;"></iframe>
+```
+
+Cambiare cosa mostra (altro campo, altro valore) è una modifica alla dashboard Grafana, non al
+codice server — esattamente il punto.
 
 Attenzione: senza il filtro su `kind` (o su un campo equivalente presente solo nei record-file),
 la query ripesca anche il record del trattamento stesso se il suo `data` contiene già un campo

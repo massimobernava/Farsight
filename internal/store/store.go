@@ -10,6 +10,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -164,6 +165,56 @@ func (s *Store) SaveRecord(tenantID, deviceID, recordID string, ts time.Time, da
 		ON CONFLICT (tenant_id, device_id, record_id) DO UPDATE SET ts = excluded.ts, data_json = excluded.data_json`,
 		tenantID, deviceID, recordID, ts.UTC().Format(time.RFC3339), string(dataJSON))
 	return err
+}
+
+// RecordMeta is one row from device_records, with Data already decoded.
+type RecordMeta struct {
+	TenantID string
+	DeviceID string
+	RecordID string
+	Data     map[string]string
+}
+
+// FindRecordsByField returns every record (any tenant/device) whose data
+// has fieldName == fieldValue — e.g. every record linking back to a given
+// treatment via a "treatment_id" field. Generic on purpose: this package
+// has no idea what "treatment_id" means, it's just a key some caller
+// chose (see docs/DEVELOPMENT.md on records). fieldName is restricted to
+// letters/digits/underscore before use, even though it's passed as a bound
+// parameter (not SQL-injectable) — an unexpected JSON path expression
+// there would just be a confusing correctness bug, not a security issue,
+// but there's no reason to allow it.
+func (s *Store) FindRecordsByField(fieldName, fieldValue string) ([]RecordMeta, error) {
+	for _, r := range fieldName {
+		if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return nil, fmt.Errorf("store: invalid field name %q", fieldName)
+		}
+	}
+
+	rows, err := s.db.Query(`
+		SELECT tenant_id, device_id, record_id, data_json
+		FROM device_records
+		WHERE json_extract(data_json, ?) = ?
+		ORDER BY ts DESC`,
+		"$."+fieldName, fieldValue)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []RecordMeta
+	for rows.Next() {
+		var m RecordMeta
+		var dataJSON string
+		if err := rows.Scan(&m.TenantID, &m.DeviceID, &m.RecordID, &dataJSON); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(dataJSON), &m.Data); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // GetDevice returns the persisted metadata for (tenantID, deviceID), or a
