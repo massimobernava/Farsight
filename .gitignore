@@ -15,5 +15,8 @@ packaging/*/build/
 .env
 *.authkey
 
+# Real device/patient data — never goes online, private-repo test fixtures only
+/data/
+
 # OS
 .DS_Store

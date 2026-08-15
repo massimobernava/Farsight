@@ -2,10 +2,9 @@
 
 **Non è una feature ufficiale di Farsight.** Dimostra che il sistema esistente (upload
 generico + MQTT) può assorbire un formato dati proprietario/interno — in questo caso i file
-`.dat` prodotti da un dispositivo oftalmico (vedi
-[`data/TID-000001-000276-111125.dat`](../../data/TID-000001-000276-111125.dat) nel repo per un
-file reale) — senza che il formato specifico debba entrare nel codice base di
-`farsight-server`.
+`.dat` prodotti da un dispositivo oftalmico — senza che il formato specifico debba entrare nel
+codice base di `farsight-server`. File di esempio reali non versionati (dati paziente, mai su
+git): tienili in locale sotto `data/` (ignorato da git) per provare l'importer.
 
 ## Come funziona
 
