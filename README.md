@@ -1,3 +1,5 @@
+<img src="assets/farsight.ico" width="64" height="64" alt="">
+
 # Farsight
 
 ![build](https://github.com/massimobernava/Farsight/actions/workflows/build-deb.yml/badge.svg)

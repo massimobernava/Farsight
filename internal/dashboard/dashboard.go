@@ -28,6 +28,7 @@ var pageTemplate = template.Must(template.New("dashboard").Parse(`<!doctype html
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="15">
+<link rel="icon" href="/favicon.ico">
 <title>Farsight — Macchine</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 2rem; background: #111; color: #eee; }

@@ -40,6 +40,7 @@ const DefaultTemplate = `<!doctype html>
 <html lang="it">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="/favicon.ico">
 <title>Farsight — Record</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 1rem; background: #111; color: #eee; }

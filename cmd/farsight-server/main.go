@@ -1,11 +1,12 @@
 // farsight-server is the control plane: it subscribes to every device's
 // MQTT status/telemetry topics and serves a dashboard listing known
 // machines with a direct link to each one's noVNC desktop. It never
-// proxies VNC/SSH traffic itself — see PROJECT_SPEC.md's core principle.
+// proxies VNC/SSH traffic itself.
 package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +34,9 @@ import (
 )
 
 const defaultConfigPath = "/etc/farsight/server.conf"
+
+//go:embed static/favicon.ico
+var faviconICO []byte
 
 func main() {
 	if err := run(); err != nil {
@@ -102,6 +106,11 @@ func run() error {
 	dashCfg := dashboard.Config{WebsockifyPort: websockifyPort, SSHUser: sshUser}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(faviconICO)
+	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		devices := listWithMeta(reg, st)
