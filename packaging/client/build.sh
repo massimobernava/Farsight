@@ -6,7 +6,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PKG_SRC="$REPO_ROOT/packaging/client"
 VERSION="${VERSION:-0.1.0}"
-ARCH="$(dpkg --print-architecture)"
+ARCH="${ARCH:-$(dpkg --print-architecture)}"
 BUILD_DIR="$REPO_ROOT/packaging/client/build"
 ROOT="$BUILD_DIR/root"
 DIST_DIR="$REPO_ROOT/dist"

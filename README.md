@@ -2,76 +2,75 @@
 
 ![build](https://github.com/massimobernava/Farsight/actions/workflows/build-deb.yml/badge.svg)
 
-*[English version](README.en.md)*
+*[Versione italiana](README.md)*
 
-Accesso remoto (desktop + SSH) e monitoraggio per un parco di macchine Ubuntu, raggiungibili
-solo dalla tua rete Tailscale — mai esposte pubblicamente.
+Remote access (desktop + SSH) and monitoring for a fleet of Ubuntu machines, reachable only
+from your Tailscale network — never exposed publicly.
 
-Stato: prototipo.
+Status: prototype.
 
-## Requisiti
+## Requirements
 
-- Le macchine (client e server) devono far parte della stessa rete Tailscale.
-- Se una macchina non ha già Tailscale configurato, ti serve una
-  [auth key](https://login.tailscale.com/admin/settings/keys) per farla entrare nella rete
-  durante l'installazione.
+- Both client and server machines must be part of the same Tailscale network.
+- If a machine doesn't already have Tailscale set up, you'll need an
+  [auth key](https://login.tailscale.com/admin/settings/keys) to join it during install.
 
-## Installare il server
+## Installing the server
 
-Un'unica macchina, dedicata al monitoraggio (dashboard + Grafana).
+One dedicated machine, for monitoring (dashboard + Grafana).
 
 ```bash
-export TS_AUTHKEY=tskey-auth-...   # solo se questa macchina non è già su Tailscale
+export TS_AUTHKEY=tskey-auth-...   # only if this machine isn't already on Tailscale
 dpkg -i farsight-server_*.deb
 ```
 
-L'ultimo `.deb` si trova nella pagina [Releases](https://github.com/massimobernava/Farsight/releases).
+The latest `.deb` is on the [Releases](https://github.com/massimobernava/Farsight/releases) page.
 
-## Installare il client
+## Installing the client
 
-Su ogni macchina da monitorare/controllare da remoto.
+On every machine you want to monitor/control remotely.
 
 ```bash
-export TS_AUTHKEY=tskey-auth-...   # solo se questa macchina non è già su Tailscale
+export TS_AUTHKEY=tskey-auth-...   # only if this machine isn't already on Tailscale
 dpkg -i farsight-client_*.deb
 ```
 
-Poi apri `/etc/farsight/client.conf` e imposta:
-- `MQTT_BROKER` — IP Tailscale del server (es. `tcp://100.x.x.x:1883`)
-- `TENANT_ID` / `DEVICE_ID` — nome che identifica questa macchina in dashboard (`DEVICE_ID`
-  di default è l'hostname; va bene lasciarlo se già parlante)
+Then edit `/etc/farsight/client.conf` and set:
+- `MQTT_BROKER` — the server's Tailscale IP (e.g. `tcp://100.x.x.x:1883`)
+- `TENANT_ID` / `DEVICE_ID` — the name identifying this machine in the dashboard (`DEVICE_ID`
+  defaults to the hostname; fine to leave as-is if it's already meaningful)
 
-Poi riavvia:
+Then restart:
 
 ```bash
 systemctl restart farsight-agent farsight-x11vnc farsight-vnc-proxy
 ```
 
-## Uso
+## Usage
 
-- **Dashboard**: `http://<ip-tailscale-server>:8080/` — elenco macchine, stato online/offline,
-  link diretto al desktop remoto di ciascuna. Puoi dare un nome a ogni macchina (es. "Sala
-  Operatoria 1") dal campo accanto al suo ID: resta salvato anche dopo un riavvio.
-- **Grafana**: `http://<ip-tailscale-server>:3000/` (primo accesso `admin`/`admin`, poi richiede
-  cambio password) — storico delle metriche.
+- **Dashboard**: `http://<server-tailscale-ip>:8080/` — machine list, online/offline status,
+  direct link to each machine's remote desktop. You can give each machine a name (e.g.
+  "Operating Room 1") in the field next to its ID: it's saved and survives a restart.
+- **Grafana**: `http://<server-tailscale-ip>:3000/` (first login `admin`/`admin`, then a
+  password change is required) — historical metrics.
 
-Entrambi raggiungibili solo da dentro la rete Tailscale.
+Both reachable only from inside the Tailscale network.
 
-## Provare rapidamente da riga di comando
+## Quick command-line test
 
-I dati viaggiano su MQTT: bastano due comandi (`mosquitto-clients`) per vedere una macchina
-comparire in dashboard senza installare nulla, utile anche per testare da uno script:
+Data travels over MQTT: two commands (`mosquitto-clients`) are enough to make a machine show
+up in the dashboard without installing anything — handy for scripting too:
 
 ```bash
-mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/test/status' -r -q 1 -m 'online'
-mosquitto_pub -h <ip-tailscale-server> -t 'farsight/default/test/telemetry' -q 1 -m \
+mosquitto_pub -h <server-tailscale-ip> -t 'farsight/default/test/status' -r -q 1 -m 'online'
+mosquitto_pub -h <server-tailscale-ip> -t 'farsight/default/test/telemetry' -q 1 -m \
   '{"ts":"2026-08-13T12:00:00Z","tenant_id":"default","device_id":"test","cpu_percent":12.5,"mem_percent":40.2,"disk_percent":55.0}'
 ```
 
-Per integrare Farsight in un programma esistente (schema completo, SDK C, metriche custom):
+To integrate Farsight into an existing program (full schema, C SDK, custom metrics):
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-## Documentazione
+## Documentation
 
-- [PROJECT_SPEC.md](PROJECT_SPEC.md) — design e scelte architetturali (italiano)
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, test, release, per chi sviluppa Farsight
+- [PROJECT_SPEC.md](PROJECT_SPEC.md) — design and architectural decisions (Italian)
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, test, release, for Farsight developers

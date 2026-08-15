@@ -42,8 +42,7 @@ fi
 # identity (ts/tenant_id/device_id) — everything else is under "metrics",
 # a fully open bag. Point-in-time attributes (Tailscale IP, whether the
 # desktop is reachable, ...) travel on a separate MQTT topic entirely and
-# go to farsight-server's SQLite store, not here — see
-# PROJECT_SPEC.md "Componente 2" and docs/DEVELOPMENT.md.
+# go to farsight-server's SQLite store, not here — see docs/DEVELOPMENT.md.
 TOKEN=""
 [ -f /etc/farsight/influx_token ] && TOKEN=$(cat /etc/farsight/influx_token)
 mkdir -p /etc/telegraf/telegraf.d

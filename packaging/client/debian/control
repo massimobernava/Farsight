@@ -7,5 +7,4 @@ Depends: x11vnc, python3-websockify, novnc, iproute2, systemd, curl, ca-certific
 Maintainer: Farsight <massimo.bernava@gmail.com>
 Description: Farsight remote access & telemetry client
  Installs and manages the Tailscale-bound x11vnc + websockify/noVNC remote
- desktop stack and the farsight-agent telemetry publisher. See
- PROJECT_SPEC.md in the farsight repository for the full design.
+ desktop stack and the farsight-agent telemetry publisher.

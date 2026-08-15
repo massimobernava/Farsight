@@ -1,60 +1,22 @@
 #!/bin/bash
-# postinst for farsight-server. Idempotent: re-running dpkg -i on a machine
-# that already has some/all of Mosquitto, Telegraf, InfluxDB2 or Grafana
-# installed must not reconfigure or restart those from scratch — same
-# "detect, don't clobber" principle as the client package's Tailscale
-# handling.
+# postinst for farsight-server. Only configures — installing Mosquitto,
+# Telegraf, InfluxDB2 and Grafana is apt's job (see debian/control
+# Depends:), which leaves an already-installed one alone rather than
+# reconfiguring it from scratch, same "detect, don't clobber" principle as
+# the client package's Tailscale handling. Idempotent: safe to reinstall.
 set -e
 
 CONF=/etc/farsight/server.conf
 
 echo "farsight-server: postinst"
 
-# --- Mosquitto (plain Ubuntu universe package, no extra repo needed) ---
-if ! dpkg -s mosquitto >/dev/null 2>&1; then
-    echo "farsight-server: installing mosquitto..."
-    apt-get update -qq
-    apt-get install -y mosquitto mosquitto-clients
-else
-    echo "farsight-server: mosquitto already installed, leaving package as-is."
-fi
-
-# --- InfluxData repo, shared by Telegraf + InfluxDB 2.x ---
-if ! dpkg -s telegraf >/dev/null 2>&1 || ! dpkg -s influxdb2 >/dev/null 2>&1; then
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://repos.influxdata.com/influxdata-archive.key \
-        | gpg --dearmor -o /etc/apt/keyrings/influxdata-archive.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/influxdata-archive.gpg] https://repos.influxdata.com/debian stable main" \
-        > /etc/apt/sources.list.d/influxdata.list
-    apt-get update -qq
-fi
-
-if ! dpkg -s telegraf >/dev/null 2>&1; then
-    echo "farsight-server: installing telegraf..."
-    apt-get install -y telegraf
-else
-    echo "farsight-server: telegraf already installed, leaving package as-is."
-fi
-
-if ! dpkg -s influxdb2 >/dev/null 2>&1; then
-    echo "farsight-server: installing influxdb2..."
-    apt-get install -y influxdb2 influxdb2-cli
-else
-    echo "farsight-server: influxdb2 already installed, leaving package as-is."
-fi
-
-# --- Grafana repo + package ---
-if ! dpkg -s grafana >/dev/null 2>&1; then
-    echo "farsight-server: installing grafana..."
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
-        > /etc/apt/sources.list.d/grafana.list
-    apt-get update -qq
-    apt-get install -y grafana
-else
-    echo "farsight-server: grafana already installed, leaving package as-is."
-fi
+# Mosquitto, Telegraf, InfluxDB2 and Grafana are apt Depends: (see
+# debian/control) — apt already installed them (or left them alone if
+# already present) as part of this same transaction, before this script
+# ran. Calling apt-get from here ourselves would deadlock: dpkg already
+# holds the frontend lock for the whole transaction that's running this
+# script. install.sh is what adds the InfluxData/Grafana apt repos those
+# Depends: need, before apt ever sees this package.
 
 # --- Grafana SQLite datasource plugin (reads the same device-identity DB
 # farsight-server writes to, see /var/lib/farsight/farsight.db below) ---
@@ -99,8 +61,12 @@ if [ ! -s "$TOKEN_FILE" ]; then
     fi
     TOKEN=$(grep -o 'token = "[^"]*"' /root/.influxdbv2/configs 2>/dev/null | head -1 | sed 's/token = "//;s/"$//')
     if [ -n "$TOKEN" ]; then
-        umask 077
-        printf '%s' "$TOKEN" > "$TOKEN_FILE"
+        # Subshell: scopes umask 077 to this file write only. A bare `umask
+        # 077` here would leak into the rest of the script and silently
+        # make every file it writes afterwards (e.g. Grafana's datasource
+        # provisioning file below) root-only — unreadable by the grafana
+        # user, breaking Grafana startup.
+        (umask 077; printf '%s' "$TOKEN" > "$TOKEN_FILE")
     else
         echo "farsight-server: could not read InfluxDB token, Telegraf output will fail until $TOKEN_FILE is fixed manually." >&2
     fi
