@@ -3,8 +3,13 @@ Version: __VERSION__
 Section: net
 Priority: optional
 Architecture: __ARCH__
-Depends: x11vnc, python3-websockify, novnc, iproute2, systemd, curl, ca-certificates
+Depends: x11vnc, xvfb, python3-websockify, novnc, iproute2, systemd, curl, ca-certificates
 Maintainer: Farsight <massimo.bernava@gmail.com>
 Description: Farsight remote access & telemetry client
  Installs and manages the Tailscale-bound x11vnc + websockify/noVNC remote
- desktop stack and the farsight-agent telemetry publisher.
+ desktop stack and the farsight-agent telemetry publisher. x11vnc attaches
+ to whatever's on X11_DISPLAY: an existing desktop session if there is one,
+ otherwise a virtual display (Xvfb) this package starts itself. Requires
+ Tailscale to already be installed and reachable (see install.sh, which
+ handles that before this package installs) — not pulled in via Depends:
+ since it's not in Ubuntu's own repos.

@@ -1,0 +1,26 @@
+#!/bin/bash
+# Starts a virtual X11 display (Xvfb) for x11vnc to attach to, but only if
+# X11_DISPLAY doesn't already have a real X server on it — a machine with
+# an actual logged-in desktop (dev machines, some real deployments) must
+# never get a second, competing X server on the same display number. If one
+# is already there, this becomes a harmless no-op that just stays "active"
+# so systemd doesn't restart-loop it.
+#
+# Kept separate from any window manager on purpose: what runs inside the
+# virtual display (Openbox, LabVIEW, nothing at all) is the operator's
+# choice, not something Farsight installs or manages.
+set -euo pipefail
+
+# shellcheck source=/etc/farsight/client.conf
+source /etc/farsight/client.conf
+
+DISPLAY_VAL="${X11_DISPLAY:-:0}"
+DISPLAY_NUM="${DISPLAY_VAL#:}"
+SOCK="/tmp/.X11-unix/X${DISPLAY_NUM}"
+
+if [ -e "$SOCK" ]; then
+    echo "farsight-xvfb-wrapper: ${DISPLAY_VAL} already has an X server running, nothing to do."
+    exec sleep infinity
+fi
+
+exec /usr/bin/Xvfb "$DISPLAY_VAL" -screen 0 "${XVFB_RESOLUTION:-1920x1080x24}" -nolisten tcp

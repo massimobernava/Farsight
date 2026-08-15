@@ -31,11 +31,18 @@ TS_LOGIN_SERVER=
 # --- x11vnc / websockify ---
 # Optional VNC password file (created with `x11vnc -storepasswd`). Leave
 # empty to run x11vnc without a password (VPN membership is the primary
-# access control per PROJECT_SPEC.md).
+# access control).
 VNC_PASSWORD_FILE=
 
-# X11 display x11vnc attaches to.
+# X11 display x11vnc attaches to. If nothing is already listening here
+# (no logged-in desktop), farsight-xvfb starts a virtual display on this
+# same number automatically — see farsight-xvfb-wrapper. If something's
+# already there (a real desktop session), it's left alone.
 X11_DISPLAY=:0
+
+# Resolution/depth for the virtual display, only used when farsight-xvfb
+# actually has to create one (see X11_DISPLAY above).
+XVFB_RESOLUTION=1920x1080x24
 
 # Local TCP port x11vnc listens on (Tailscale interface only).
 VNC_PORT=5900

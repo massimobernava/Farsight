@@ -1,7 +1,8 @@
 [Unit]
-Description=Farsight x11vnc (attaches to existing X11 session, Tailscale-only)
-After=network-online.target tailscaled.service
+Description=Farsight x11vnc (attaches to X11_DISPLAY, Tailscale-only)
+After=network-online.target tailscaled.service farsight-xvfb.service
 Wants=network-online.target
+Wants=farsight-xvfb.service
 
 [Service]
 Type=simple

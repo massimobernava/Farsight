@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # Fetches the latest (or a given) farsight-client .deb from a GitHub Release
-# and installs it. Run as root. All of farsight-client's dependencies
-# (x11vnc, python3-websockify, novnc) are in stock Ubuntu repos — no extra
-# apt repo/key setup needed, unlike the server side.
+# and installs it. Run as root. farsight-client's own dependencies (x11vnc,
+# xvfb, python3-websockify, novnc) are in stock Ubuntu repos, pulled in via
+# Depends: automatically — but Tailscale isn't, so this script installs it
+# first if it's missing (Tailscale's official installer adds its own apt
+# repo and calls apt-get itself; doing that from inside the .deb's postinst
+# would deadlock on dpkg's lock the same way the server-side install used
+# to — see packaging/server/install.sh for the identical issue there).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/massimobernava/Farsight/main/packaging/client/install.sh | sudo bash
 #   sudo bash install.sh v0.2.0          # install a specific release tag
 #   sudo bash install.sh ./farsight-client_0.1.0_amd64.deb   # install a local .deb, skip download
+#
+# Set TS_AUTHKEY (and optionally TS_LOGIN_SERVER) to join Tailscale
+# automatically if this machine isn't on it yet — same as the .deb's own
+# postinst used to do. Harmless/skipped if Tailscale is already up.
 #
 # While the Farsight repo is private, GitHub's API needs auth to see
 # releases/assets: export GITHUB_TOKEN (a PAT with repo read access) before
@@ -32,6 +40,25 @@ trap 'rm -rf "$WORKDIR"' EXIT
 echo "==> installing prerequisites (curl, jq)"
 apt-get update -qq
 apt-get install "${APT_YES[@]}" curl ca-certificates jq
+
+if command -v tailscale >/dev/null 2>&1; then
+    echo "==> Tailscale already installed, leaving it as-is."
+else
+    echo "==> installing Tailscale"
+    curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+if tailscale status >/dev/null 2>&1; then
+    echo "==> Tailscale already authenticated, leaving it as-is."
+elif [ -n "${TS_AUTHKEY:-}" ]; then
+    LOGIN_SERVER_ARG=()
+    [ -n "${TS_LOGIN_SERVER:-}" ] && LOGIN_SERVER_ARG=(--login-server="$TS_LOGIN_SERVER")
+    tailscale up --authkey="${TS_AUTHKEY}" "${LOGIN_SERVER_ARG[@]}"
+else
+    echo "install.sh: Tailscale installed but not authenticated, and no TS_AUTHKEY set." >&2
+    echo "  Run 'tailscale up' manually, then re-run this script." >&2
+    exit 1
+fi
 
 if [[ "$ARG" == *.deb ]]; then
     DEB_PATH="$ARG"

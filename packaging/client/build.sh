@@ -24,10 +24,13 @@ echo "==> building farsight-agent ($ARCH)"
 echo "==> assembling package tree"
 install -m 0755 "$PKG_SRC/usr/bin/farsight-x11vnc-wrapper" "$ROOT/usr/bin/farsight-x11vnc-wrapper"
 install -m 0755 "$PKG_SRC/usr/bin/farsight-vnc-proxy-wrapper" "$ROOT/usr/bin/farsight-vnc-proxy-wrapper"
+install -m 0755 "$PKG_SRC/usr/bin/farsight-xvfb-wrapper" "$ROOT/usr/bin/farsight-xvfb-wrapper"
+install -m 0755 "$PKG_SRC/usr/bin/farsight-screen-export" "$ROOT/usr/bin/farsight-screen-export"
 
 install -m 0644 "$PKG_SRC/lib/systemd/system/farsight-agent.service" "$ROOT/lib/systemd/system/"
 install -m 0644 "$PKG_SRC/lib/systemd/system/farsight-x11vnc.service" "$ROOT/lib/systemd/system/"
 install -m 0644 "$PKG_SRC/lib/systemd/system/farsight-vnc-proxy.service" "$ROOT/lib/systemd/system/"
+install -m 0644 "$PKG_SRC/lib/systemd/system/farsight-xvfb.service" "$ROOT/lib/systemd/system/"
 
 install -m 0644 "$PKG_SRC/etc/farsight/client.conf.example" "$ROOT/etc/farsight/client.conf"
 

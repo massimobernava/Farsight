@@ -2,8 +2,7 @@
 # Resolves the current Tailscale IP at start time and execs x11vnc bound
 # only to that interface, never 0.0.0.0. The Tailscale IP can change
 # (re-auth, key rotation); systemd's Restart=on-failure combined with the
-# agent-reported service state is the prototype-phase mitigation for that —
-# see PROJECT_SPEC.md.
+# agent-reported service state is the prototype-phase mitigation for that.
 set -euo pipefail
 
 # shellcheck source=/etc/farsight/client.conf
@@ -21,7 +20,7 @@ fi
 # -rfbportv6 -1 disables that second listener outright — belt-and-suspenders
 # with -no6/-noipv6, but it's the one that's actually deterministic. This
 # closes an otherwise-silent gap in the "Tailscale interface only" bind
-# requirement from PROJECT_SPEC.md.
+# requirement.
 PASSWD_ARGS=(-nopw)
 if [ -n "${VNC_PASSWORD_FILE:-}" ] && [ -f "${VNC_PASSWORD_FILE}" ]; then
     PASSWD_ARGS=(-rfbauth "${VNC_PASSWORD_FILE}")
