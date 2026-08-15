@@ -1,7 +1,7 @@
 # Sviluppo di Farsight
 
 Documento per chi sviluppa/mantiene Farsight, non per chi lo installa e basta — per quello
-vedi il [README](../README.md). Design e scelte architetturali: [PROJECT_SPEC.md](../PROJECT_SPEC.md).
+vedi il [README](../README.md).
 
 ## Struttura repo
 
@@ -67,7 +67,7 @@ su tutte le interfacce invece che solo loopback.
 
 ## Control plane e Grafana
 
-Decisione architetturale (vedi PROJECT_SPEC.md "Componente 2"): **Grafana è l'interfaccia
+Decisione architetturale: **Grafana è l'interfaccia
 principale**, `farsight-server` non cerca di diventare un motore di dashboard proprio — sarebbe
 reinventare male qualcosa che Grafana già fa bene (editor pannelli, variabili template,
 multi-tenant via Organizations).
