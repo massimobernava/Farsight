@@ -132,6 +132,41 @@
   .chat-mock .bubble { color: var(--code-fg); line-height: 1.5; }
   .chat-mock .msg.user .who { color: var(--accent); }
 
+  /* --- product tour screenshots --- */
+  .tour-grid { display: grid; grid-template-columns: 1fr; gap: 1.5rem; align-items: start; }
+  @media (min-width: 840px) { .tour-grid { grid-template-columns: 1fr 0.86fr; } }
+  .tour-col { display: grid; gap: 1.5rem; }
+  .shot {
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    background: var(--card-bg); box-shadow: var(--shadow);
+  }
+  .shot-bar {
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.55rem 0.7rem; background: #0c1220; border-bottom: 1px solid var(--border);
+  }
+  .shot-bar .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .shot-bar .dot.r { background: #ff5f57; } .shot-bar .dot.y { background: #febc2e; } .shot-bar .dot.g { background: #28c840; }
+  .shot-bar .shot-url {
+    margin-left: 0.5rem; font-size: 0.72rem; color: var(--fg-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shot-caption { margin: 0.6rem 0.1rem 0; font-size: 0.85rem; color: var(--fg-muted); }
+  .shot-caption strong { color: var(--fg); font-weight: 600; }
+
+  /* --- extensibility / SDK flow --- */
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; margin-top: 1.75rem; }
+  .flow-step { position: relative; padding-top: 0.25rem; }
+  .flow-step .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.9rem; height: 1.9rem; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent);
+    font-weight: 700; font-size: 0.85rem; margin-bottom: 0.75rem;
+  }
+  .flow-step h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .flow-step p { margin: 0; color: var(--fg-muted); font-size: 0.9rem; }
+  .flow-step code { background: var(--bg-alt); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
+
   footer { padding: 2.5rem 0 4rem; color: var(--fg-muted); font-size: 0.88rem; }
   footer .foot-links { margin-bottom: 1rem; }
   footer .foot-links a { color: var(--fg); text-decoration: none; margin-right: 1.25rem; font-weight: 600; }
@@ -194,6 +229,38 @@
 
 <section class="bg-alt">
   <div class="wrap">
+    <h2>Bring your own file format</h2>
+    <p style="color:var(--fg-muted); max-width:38rem; margin-top:-0.75rem;">
+      Farsight ships with a <a href="https://github.com/massimobernava/Farsight/tree/main/sdk/c">C SDK</a> so an
+      existing program — a LabVIEW driver, a PLC controller, anything — can send data without
+      touching MQTT or HTTP directly. Proprietary file formats don't need to become Farsight's
+      problem either:
+    </p>
+    <div class="flow">
+      <div class="flow-step">
+        <span class="num">1</span>
+        <h3>Send it</h3>
+        <p><code>farsight_upload_file()</code> ships any file from your C program — a proprietary
+        <code>.dat</code> log, an image, anything — linked to a device, no MQTT/HTTP code to write.</p>
+      </div>
+      <div class="flow-step">
+        <span class="num">2</span>
+        <h3>Auto-import</h3>
+        <p>Drop a small Python script named after the file extension into one folder. farsight-server
+        runs it on every upload — parses the format, publishes the data. No core code touched, ever.</p>
+      </div>
+      <div class="flow-step">
+        <span class="num">3</span>
+        <h3>See it</h3>
+        <p>Structured fields land in SQLite/InfluxDB, queryable in Grafana. Images show up directly
+        in the built-in record gallery — no extra viewer to build.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
     <div class="llm-box">
       <div>
         <span class="badge">New</span>
@@ -218,6 +285,37 @@
           <div class="who">Assistant</div>
           <div class="bubble">Yes — valve_current peaked at 2.37A during cooldown (stage 8), well above the normal 0.8–1.0A opening range. Same timestamp shows an abnormal voltage spike too. Source: get_telemetry_series.</div>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-alt">
+  <div class="wrap">
+    <h2>See it in action</h2>
+    <div class="tour-grid">
+      <div class="tour-col">
+        <div>
+          <div class="shot">
+            <div class="shot-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="shot-url">farsight.local:8080</span></div>
+            <img src="shot-dashboard.png" alt="Farsight dashboard: registered machines list with online/offline status">
+          </div>
+          <p class="shot-caption"><strong>Fleet dashboard</strong> — every device, live status, one click to its remote desktop.</p>
+        </div>
+        <div>
+          <div class="shot">
+            <div class="shot-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="shot-url">grafana.local/d/batch</span></div>
+            <img src="shot-grafana.png" alt="Grafana chart showing a valve current/voltage anomaly during cooldown">
+          </div>
+          <p class="shot-caption"><strong>Historical telemetry</strong> — this spike is the anomaly the assistant found below.</p>
+        </div>
+      </div>
+      <div>
+        <div class="shot">
+          <div class="shot-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="shot-url">grafana.local/a/llm-assistant</span></div>
+          <img src="shot-chat.png" alt="LLM assistant chat: real answer identifying the valve anomaly with device, timestamp, and reasoning">
+        </div>
+        <p class="shot-caption"><strong>The assistant, unscripted</strong> — same anomaly, asked in plain English, answered with real values and a timestamp.</p>
       </div>
     </div>
   </div>
