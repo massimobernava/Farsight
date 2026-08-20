@@ -5,48 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Farsight — Remote access and monitoring over Tailscale</title>
 <meta name="description" content="Self-hosted remote desktop, SSH, and fleet monitoring for Ubuntu machines over your Tailscale network. Free, open source, no per-seat pricing.">
-<link rel="icon" href="farsight.ico">
+<link rel="icon" type="image/png" href="favicon-32.png">
 <style>
   :root {
-    --bg: #ffffff;
-    --bg-alt: #f4f5f7;
-    --fg: #1a1d23;
-    --fg-muted: #5b6270;
-    --border: #e2e4e9;
-    --accent: #2f6fed;
-    --accent-fg: #ffffff;
-    --code-bg: #0d1117;
-    --code-fg: #d7dde5;
-    --card-bg: #ffffff;
-    --shadow: 0 1px 2px rgba(20, 20, 30, 0.06);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #0f1115;
-      --bg-alt: #15181f;
-      --fg: #eef0f3;
-      --fg-muted: #9aa2b1;
-      --border: #262a33;
-      --accent: #6ea3ff;
-      --accent-fg: #0b1220;
-      --code-bg: #0a0c10;
-      --code-fg: #d7dde5;
-      --card-bg: #171a21;
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #0f1115;
-    --bg-alt: #15181f;
-    --fg: #eef0f3;
-    --fg-muted: #9aa2b1;
-    --border: #262a33;
-    --accent: #6ea3ff;
-    --accent-fg: #0b1220;
-    --code-bg: #0a0c10;
-    --code-fg: #d7dde5;
-    --card-bg: #171a21;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --bg: #0f1522;
+    --bg-alt: #131b2b;
+    --card-bg: #151d2e;
+    --fg: #eef1f6;
+    --fg-muted: #92a0b8;
+    --border: #232e44;
+    --accent: #5b9bff;
+    --accent-soft: rgba(91, 155, 255, 0.12);
+    --accent-fg: #071224;
+    --code-bg: #0a0f1a;
+    --code-fg: #cfd8e8;
+    --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   }
 
   * { box-sizing: border-box; }
@@ -61,54 +34,61 @@
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .wrap { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+  .bg-alt { background: var(--bg-alt); }
 
   header.top {
-    padding: 4.5rem 0 3.5rem;
+    padding: 5rem 0 4rem;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 0%, var(--accent-soft), transparent 70%),
+      var(--bg);
     border-bottom: 1px solid var(--border);
   }
-  .brand { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.75rem; }
-  .brand img { width: 40px; height: 40px; border-radius: 8px; }
+  .brand { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
+  .brand img { width: 40px; height: 40px; border-radius: 9px; box-shadow: var(--shadow); }
   .brand span { font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; }
 
-  h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.15; margin: 0 0 1rem; letter-spacing: -0.02em; }
-  .lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 42rem; margin: 0 0 2rem; }
+  h1 { font-size: clamp(1.9rem, 4vw, 2.7rem); line-height: 1.15; margin: 0 0 1.1rem; letter-spacing: -0.02em; }
+  .lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 42rem; margin: 0 0 2.25rem; }
 
   .cta-row { display: flex; flex-wrap: wrap; gap: 0.75rem; }
   .btn {
     display: inline-flex; align-items: center; gap: 0.5rem;
-    padding: 0.65rem 1.15rem; border-radius: 8px; font-weight: 600; font-size: 0.95rem;
+    padding: 0.7rem 1.25rem; border-radius: 8px; font-weight: 600; font-size: 0.95rem;
     border: 1px solid var(--border);
   }
   .btn:hover { text-decoration: none; }
   .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-  .btn.primary:hover { opacity: 0.9; }
+  .btn.primary:hover { filter: brightness(1.08); }
   .btn.ghost { background: transparent; color: var(--fg); }
-  .btn.ghost:hover { background: var(--bg-alt); }
+  .btn.ghost:hover { background: var(--bg-alt); border-color: var(--fg-muted); }
 
-  section { padding: 3.25rem 0; border-bottom: 1px solid var(--border); }
+  section { padding: 3.5rem 0; border-bottom: 1px solid var(--border); }
   section:last-of-type { border-bottom: none; }
-  h2 { font-size: 1.4rem; margin: 0 0 1.5rem; letter-spacing: -0.01em; }
+  h2 { font-size: 1.45rem; margin: 0 0 1.6rem; letter-spacing: -0.01em; }
   .status-pill {
     display: inline-block; font-size: 0.8rem; font-weight: 600; color: var(--fg-muted);
     border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem; margin-bottom: 1rem;
   }
+  .badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--accent-fg); background: var(--accent);
+    border-radius: 999px; padding: 0.2rem 0.6rem; margin-bottom: 0.9rem;
+  }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
   .card {
-    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
     padding: 1.25rem; box-shadow: var(--shadow);
+    transition: transform 0.15s ease, border-color 0.15s ease;
   }
+  .card:hover { transform: translateY(-2px); border-color: var(--accent); }
   .card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
   .card p { margin: 0; color: var(--fg-muted); font-size: 0.92rem; }
 
-  ul.plain { list-style: none; margin: 0; padding: 0; }
-  ul.plain li { padding: 0.4rem 0 0.4rem 1.6rem; position: relative; color: var(--fg-muted); }
-  ul.plain li::before { content: "—"; position: absolute; left: 0; color: var(--fg-muted); }
-
-  .roadmap { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+  .roadmap { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
   .roadmap li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.95rem; }
   .roadmap .mark { flex: none; width: 1.1rem; text-align: center; font-weight: 700; }
-  .roadmap .done .mark { color: #2fa84f; }
+  .roadmap .done .mark { color: #43c463; }
   .roadmap .planned .mark { color: var(--fg-muted); }
   .roadmap .planned { color: var(--fg-muted); }
 
@@ -120,12 +100,39 @@
   code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   p code, li code { background: var(--bg-alt); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.88em; }
 
-  .two-col { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
-  @media (min-width: 720px) { .two-col { grid-template-columns: 1fr 1fr; } }
-  .two-col h3 { font-size: 1rem; margin: 0 0 0.6rem; }
+  .stack { display: grid; grid-template-columns: 1fr; gap: 1.75rem; max-width: 40rem; }
+  .stack h3 { font-size: 1rem; margin: 0 0 0.6rem; display: flex; align-items: center; gap: 0.5rem; }
+  .stack h3 .step { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  /* --- LLM assistant showcase --- */
+  .llm-box {
+    background: linear-gradient(160deg, var(--accent-soft), transparent 60%), var(--card-bg);
+    border: 1px solid var(--accent);
+    border-radius: 14px;
+    padding: 2rem;
+    box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+  @media (min-width: 760px) { .llm-box { grid-template-columns: 1.1fr 1fr; align-items: center; } }
+  .llm-box h2 { margin: 0 0 0.75rem; }
+  .llm-box p { color: var(--fg-muted); margin: 0 0 0.5rem; }
+  .llm-box ul.plain { list-style: none; margin: 1rem 0 0; padding: 0; }
+  .llm-box ul.plain li { padding: 0.3rem 0 0.3rem 1.4rem; position: relative; font-size: 0.92rem; color: var(--fg-muted); }
+  .llm-box ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--accent); }
+
+  .chat-mock {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1rem; font-size: 0.85rem;
+  }
+  .chat-mock .msg { margin-bottom: 0.75rem; }
+  .chat-mock .msg:last-child { margin-bottom: 0; }
+  .chat-mock .who { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); margin-bottom: 0.25rem; }
+  .chat-mock .bubble { color: var(--code-fg); line-height: 1.5; }
+  .chat-mock .msg.user .who { color: var(--accent); }
 
   footer { padding: 2.5rem 0 4rem; color: var(--fg-muted); font-size: 0.88rem; }
-  footer a { color: var(--fg-muted); text-decoration: underline; }
   footer .foot-links { margin-bottom: 1rem; }
   footer .foot-links a { color: var(--fg); text-decoration: none; margin-right: 1.25rem; font-weight: 600; }
   footer .foot-links a:hover { text-decoration: underline; }
@@ -136,7 +143,7 @@
 <header class="top">
   <div class="wrap">
     <div class="brand">
-      <img src="farsight.ico" alt="">
+      <img src="logo-128.png" alt="">
       <span>Farsight</span>
     </div>
     <h1>Remote desktop, SSH, and fleet monitoring —<br>self-hosted, over your own Tailscale network.</h1>
@@ -178,8 +185,39 @@
         <p>Multiple isolated customers or teams on one server, with per-tenant device scoping.</p>
       </div>
       <div class="card">
-        <h3>LLM assistant</h3>
-        <p>Natural-language queries over telemetry and anomaly triage — any OpenAI-compatible provider, local (Ollama) or hosted (OpenRouter).</p>
+        <h3>Self-hosted, always</h3>
+        <p>Your data, your servers, your VPN. Nothing routes through a third party, ever.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="bg-alt">
+  <div class="wrap">
+    <div class="llm-box">
+      <div>
+        <span class="badge">New</span>
+        <h2>Ask your fleet questions, in plain language</h2>
+        <p>
+          The LLM assistant reads live telemetry, device attributes, and records to answer
+          questions and triage anomalies — with any OpenAI-compatible provider: a local Ollama
+          model for fully on-prem setups, or OpenRouter when you'd rather not run one.
+        </p>
+        <ul class="plain">
+          <li>Configured on one admin page — provider URL, API key, model string, no restart</li>
+          <li>Per-metric descriptions so it knows what a normal value looks like, not just a field name</li>
+          <li>Cites the device, time range, and tool used for every answer</li>
+        </ul>
+      </div>
+      <div class="chat-mock">
+        <div class="msg user">
+          <div class="who">You</div>
+          <div class="bubble">Any anomalies on device 9042001?</div>
+        </div>
+        <div class="msg">
+          <div class="who">Assistant</div>
+          <div class="bubble">Yes — valve_current peaked at 2.37A during cooldown (stage 8), well above the normal 0.8–1.0A opening range. Same timestamp shows an abnormal voltage spike too. Source: get_telemetry_series.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -202,24 +240,24 @@
   </div>
 </section>
 
-<section>
+<section class="bg-alt">
   <div class="wrap">
     <h2>Quick start</h2>
-    <div class="two-col">
+    <div class="stack">
       <div>
-        <h3>Server (one dedicated machine)</h3>
+        <h3><span class="step">01</span> Server — one dedicated machine</h3>
         <pre><code>export TS_AUTHKEY=tskey-auth-...
 curl -fsSL https://raw.githubusercontent.com/massimobernava/Farsight/main/packaging/server/install.sh \
   | sudo -E bash</code></pre>
       </div>
       <div>
-        <h3>Client (every monitored machine)</h3>
+        <h3><span class="step">02</span> Client — every monitored machine</h3>
         <pre><code>export TS_AUTHKEY=tskey-auth-...
 curl -fsSL https://raw.githubusercontent.com/massimobernava/Farsight/main/packaging/client/install.sh \
   | sudo -E bash</code></pre>
       </div>
     </div>
-    <p style="margin-top:1.25rem; color:var(--fg-muted); font-size:0.92rem;">
+    <p style="margin-top:1.5rem; color:var(--fg-muted); font-size:0.92rem;">
       <code>TS_AUTHKEY</code> is only needed if the machine isn't already on your Tailscale network.
       Full setup and configuration: <a href="https://github.com/massimobernava/Farsight#readme">README</a>.
     </p>
