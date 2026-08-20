@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farsight — Remote access and monitoring over Tailscale</title>
+<meta name="description" content="Self-hosted remote desktop, SSH, and fleet monitoring for Ubuntu machines over your Tailscale network. Free, open source, no per-seat pricing.">
+<link rel="icon" href="farsight.ico">
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-alt: #f4f5f7;
+    --fg: #1a1d23;
+    --fg-muted: #5b6270;
+    --border: #e2e4e9;
+    --accent: #2f6fed;
+    --accent-fg: #ffffff;
+    --code-bg: #0d1117;
+    --code-fg: #d7dde5;
+    --card-bg: #ffffff;
+    --shadow: 0 1px 2px rgba(20, 20, 30, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115;
+      --bg-alt: #15181f;
+      --fg: #eef0f3;
+      --fg-muted: #9aa2b1;
+      --border: #262a33;
+      --accent: #6ea3ff;
+      --accent-fg: #0b1220;
+      --code-bg: #0a0c10;
+      --code-fg: #d7dde5;
+      --card-bg: #171a21;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115;
+    --bg-alt: #15181f;
+    --fg: #eef0f3;
+    --fg-muted: #9aa2b1;
+    --border: #262a33;
+    --accent: #6ea3ff;
+    --accent-fg: #0b1220;
+    --code-bg: #0a0c10;
+    --code-fg: #d7dde5;
+    --card-bg: #171a21;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+
+  header.top {
+    padding: 4.5rem 0 3.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.75rem; }
+  .brand img { width: 40px; height: 40px; border-radius: 8px; }
+  .brand span { font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; }
+
+  h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.15; margin: 0 0 1rem; letter-spacing: -0.02em; }
+  .lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 42rem; margin: 0 0 2rem; }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.65rem 1.15rem; border-radius: 8px; font-weight: 600; font-size: 0.95rem;
+    border: 1px solid var(--border);
+  }
+  .btn:hover { text-decoration: none; }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .btn.primary:hover { opacity: 0.9; }
+  .btn.ghost { background: transparent; color: var(--fg); }
+  .btn.ghost:hover { background: var(--bg-alt); }
+
+  section { padding: 3.25rem 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+  h2 { font-size: 1.4rem; margin: 0 0 1.5rem; letter-spacing: -0.01em; }
+  .status-pill {
+    display: inline-block; font-size: 0.8rem; font-weight: 600; color: var(--fg-muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem; margin-bottom: 1rem;
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+  .card {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1.25rem; box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .card p { margin: 0; color: var(--fg-muted); font-size: 0.92rem; }
+
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { padding: 0.4rem 0 0.4rem 1.6rem; position: relative; color: var(--fg-muted); }
+  ul.plain li::before { content: "—"; position: absolute; left: 0; color: var(--fg-muted); }
+
+  .roadmap { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+  .roadmap li { display: flex; align-items: baseline; gap: 0.6rem; font-size: 0.95rem; }
+  .roadmap .mark { flex: none; width: 1.1rem; text-align: center; font-weight: 700; }
+  .roadmap .done .mark { color: #2fa84f; }
+  .roadmap .planned .mark { color: var(--fg-muted); }
+  .roadmap .planned { color: var(--fg-muted); }
+
+  pre {
+    background: var(--code-bg); color: var(--code-fg); border-radius: 10px;
+    padding: 1rem 1.1rem; overflow-x: auto; font-size: 0.85rem; line-height: 1.6;
+    border: 1px solid var(--border);
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code { background: var(--bg-alt); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.88em; }
+
+  .two-col { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
+  @media (min-width: 720px) { .two-col { grid-template-columns: 1fr 1fr; } }
+  .two-col h3 { font-size: 1rem; margin: 0 0 0.6rem; }
+
+  footer { padding: 2.5rem 0 4rem; color: var(--fg-muted); font-size: 0.88rem; }
+  footer a { color: var(--fg-muted); text-decoration: underline; }
+  footer .foot-links { margin-bottom: 1rem; }
+  footer .foot-links a { color: var(--fg); text-decoration: none; margin-right: 1.25rem; font-weight: 600; }
+  footer .foot-links a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <img src="farsight.ico" alt="">
+      <span>Farsight</span>
+    </div>
+    <h1>Remote desktop, SSH, and fleet monitoring —<br>self-hosted, over your own Tailscale network.</h1>
+    <p class="lede">
+      Most teams pay per-seat for TeamViewer or AnyDesk to do something that, on a private
+      network you already control, never needs to leave that network at all. Farsight does it
+      self-hosted, free, with no artificial device limits.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/massimobernava/Farsight">View on GitHub</a>
+      <a class="btn ghost" href="https://github.com/massimobernava/Farsight#installing-the-server">Install</a>
+      <a class="btn ghost" href="https://github.com/massimobernava/Farsight/releases">Releases</a>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>What you get</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Remote desktop from the browser</h3>
+        <p>VNC over Tailscale, no client install, no relay servers — traffic goes device-to-device inside the VPN.</p>
+      </div>
+      <div class="card">
+        <h3>SSH</h3>
+        <p>Plain SSH over the same private network. Nothing extra to configure.</p>
+      </div>
+      <div class="card">
+        <h3>Fleet monitoring</h3>
+        <p>Live online/offline status and historical metrics via Grafana, out of the box, for every device.</p>
+      </div>
+      <div class="card">
+        <h3>No public exposure, ever</h3>
+        <p>Every service binds to the Tailscale interface only. Nothing to firewall, because nothing listens outside the VPN.</p>
+      </div>
+      <div class="card">
+        <h3>Multi-tenant</h3>
+        <p>Multiple isolated customers or teams on one server, with per-tenant device scoping.</p>
+      </div>
+      <div class="card">
+        <h3>LLM assistant</h3>
+        <p>Natural-language queries over telemetry and anomaly triage — any OpenAI-compatible provider, local (Ollama) or hosted (OpenRouter).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="status-pill">prototype, actively developed</span>
+    <h2>Roadmap</h2>
+    <ul class="roadmap">
+      <li class="done"><span class="mark">✓</span> Browser-based remote desktop (VNC over Tailscale, no relay, no third party)</li>
+      <li class="done"><span class="mark">✓</span> SSH access over the same private network</li>
+      <li class="done"><span class="mark">✓</span> Fleet monitoring &amp; dashboard (online/offline status, per-device naming)</li>
+      <li class="done"><span class="mark">✓</span> Historical metrics (Grafana)</li>
+      <li class="done"><span class="mark">✓</span> Multi-tenant (multiple isolated customers/teams on one server)</li>
+      <li class="done"><span class="mark">✓</span> LLM assistant — natural-language queries over telemetry, anomaly triage</li>
+      <li class="planned"><span class="mark">○</span> Fine-grained audit trail (who accessed which device, when)</li>
+      <li class="planned"><span class="mark">○</span> Headscale support as a drop-in alternative to Tailscale</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Quick start</h2>
+    <div class="two-col">
+      <div>
+        <h3>Server (one dedicated machine)</h3>
+        <pre><code>export TS_AUTHKEY=tskey-auth-...
+curl -fsSL https://raw.githubusercontent.com/massimobernava/Farsight/main/packaging/server/install.sh \
+  | sudo -E bash</code></pre>
+      </div>
+      <div>
+        <h3>Client (every monitored machine)</h3>
+        <pre><code>export TS_AUTHKEY=tskey-auth-...
+curl -fsSL https://raw.githubusercontent.com/massimobernava/Farsight/main/packaging/client/install.sh \
+  | sudo -E bash</code></pre>
+      </div>
+    </div>
+    <p style="margin-top:1.25rem; color:var(--fg-muted); font-size:0.92rem;">
+      <code>TS_AUTHKEY</code> is only needed if the machine isn't already on your Tailscale network.
+      Full setup and configuration: <a href="https://github.com/massimobernava/Farsight#readme">README</a>.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Managed hosting</h2>
+    <p style="color:var(--fg-muted); max-width:40rem;">
+      Everything above is free to self-host. If you'd rather not run the infrastructure yourself,
+      that's the paid offering — a private control-plane server (Headscale-based, one subscription
+      instead of per-seat pricing) and, if you want the LLM assistant, a set number of tokens
+      included per month. Interested? Open an
+      <a href="https://github.com/massimobernava/Farsight/issues">issue</a> on the repo.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-links">
+      <a href="https://github.com/massimobernava/Farsight">GitHub</a>
+      <a href="https://github.com/massimobernava/Farsight/blob/main/README.md">README</a>
+      <a href="https://github.com/massimobernava/Farsight/releases">Releases</a>
+      <a href="https://github.com/massimobernava/Farsight/issues">Issues</a>
+    </div>
+    Apache License 2.0. Free to use, self-host, modify, and fork.
+  </div>
+</footer>
+
+</body>
+</html>
