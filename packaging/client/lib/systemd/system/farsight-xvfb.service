@@ -1,0 +1,13 @@
+[Unit]
+Description=Farsight virtual X11 display (Xvfb, only started if X11_DISPLAY is otherwise empty)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/farsight-xvfb-wrapper
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

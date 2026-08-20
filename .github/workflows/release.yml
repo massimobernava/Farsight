@@ -1,0 +1,67 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+
+      - name: Build farsight-client.deb
+        run: VERSION="${VERSION_INPUT#v}" bash packaging/client/build.sh
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+
+      - name: Build farsight-server.deb
+        run: VERSION="${VERSION_INPUT#v}" bash packaging/server/build.sh
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: farsight-debs
+          path: dist/*.deb
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: farsight-debs
+          path: dist
+
+      - name: Create tag and draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$VERSION" HEAD
+          git push origin "$VERSION"
+          gh release create "$VERSION" \
+            --title "Farsight $VERSION" \
+            --draft \
+            --generate-notes \
+            dist/*.deb

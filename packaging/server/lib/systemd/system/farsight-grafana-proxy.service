@@ -1,0 +1,15 @@
+[Unit]
+Description=Farsight Grafana identity proxy (Tailscale-only, no Grafana password)
+After=network-online.target tailscaled.service grafana-server.service
+Wants=network-online.target
+Requires=grafana-server.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/farsight-grafana-proxy
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

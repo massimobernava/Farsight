@@ -1,0 +1,28 @@
+# Build artifacts
+/bin/
+/dist/
+packaging/*/build/
+*.deb
+*.build
+*.buildinfo
+*.changes
+
+# Go
+*.test
+*.out
+
+# Local env / secrets
+.env
+*.authkey
+
+# Real device/patient data — never goes online, private-repo test fixtures only
+/data/
+
+# Internal dev notes (design rationale, real-machine debugging narratives,
+# business/pricing considerations) — kept locally for our own use, not
+# meant for the public repo. See git history before the removal commit if
+# old content is needed; new edits just stay untracked from here on.
+/docs/
+
+# OS
+.DS_Store

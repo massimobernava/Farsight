@@ -1,0 +1,57 @@
+#!/bin/bash
+# postinst for farsight-client. Must stay idempotent: re-running dpkg -i on
+# an already-configured machine (in particular one with Tailscale already
+# installed and authenticated) must not touch that Tailscale setup.
+set -e
+
+CONF=/etc/farsight/client.conf
+TS_LOGIN_SERVER=""
+if [ -f "$CONF" ]; then
+    # shellcheck source=/etc/farsight/client.conf
+    source "$CONF"
+fi
+
+echo "farsight-client: postinst"
+
+# --- Tailscale: detect-or-install, never reconfigure an existing setup ---
+if command -v tailscale >/dev/null 2>&1; then
+    if tailscale status >/dev/null 2>&1; then
+        echo "farsight-client: Tailscale already installed and authenticated, leaving it as-is."
+    else
+        echo "farsight-client: Tailscale binary present but not authenticated yet."
+        if [ -n "${TS_AUTHKEY:-}" ]; then
+            LOGIN_SERVER_ARG=()
+            [ -n "$TS_LOGIN_SERVER" ] && LOGIN_SERVER_ARG=(--login-server="$TS_LOGIN_SERVER")
+            tailscale up --authkey="${TS_AUTHKEY}" "${LOGIN_SERVER_ARG[@]}" || \
+                echo "farsight-client: 'tailscale up' failed, run it manually." >&2
+        else
+            echo "farsight-client: no TS_AUTHKEY in environment, run 'tailscale up' manually to join the tailnet." >&2
+        fi
+    fi
+else
+    # install.sh installs Tailscale (official installer, which itself calls
+    # apt-get) *before* apt-get install ./farsight-client.deb runs — doing
+    # it here instead would deadlock, since dpkg already holds the frontend
+    # lock for the whole transaction that's running this very script (see
+    # the equivalent fix on the server side for the exact same failure).
+    echo "farsight-client: Tailscale binary not found — install.sh should have installed it before this package. Run 'tailscale up' manually once it's present." >&2
+fi
+
+# --- farsight systemd units: enable, (re)start without clobbering a
+#     currently-active farsight-managed instance's logs/state ---
+systemctl daemon-reload
+
+for unit in farsight-xvfb.service farsight-x11vnc.service farsight-vnc-proxy.service farsight-agent.service; do
+    systemctl enable "$unit" >/dev/null 2>&1 || true
+    if systemctl is-active --quiet "$unit"; then
+        echo "farsight-client: restarting already-active $unit"
+        systemctl restart "$unit" || echo "farsight-client: failed to restart $unit, check logs." >&2
+    else
+        systemctl start "$unit" || \
+            echo "farsight-client: failed to start $unit — check ${CONF} (TENANT_ID/MQTT_BROKER) and 'journalctl -u $unit'." >&2
+    fi
+done
+
+echo "farsight-client: install complete. Edit ${CONF} if needed, then 'systemctl restart farsight-agent farsight-x11vnc farsight-vnc-proxy'."
+
+exit 0

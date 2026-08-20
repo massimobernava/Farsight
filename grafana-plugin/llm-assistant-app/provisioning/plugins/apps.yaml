@@ -1,0 +1,11 @@
+apiVersion: 1
+
+apps:
+  - type: 'farsight-llmassistant-app'
+    org_id: 1
+    org_name: 'farsight'
+    disabled: false
+    jsonData:
+      apiUrl: http://default-url.com
+    secureJsonData:
+      apiKey: secret-key

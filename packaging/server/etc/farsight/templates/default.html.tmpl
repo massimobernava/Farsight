@@ -1,0 +1,60 @@
+{{/*
+  Default template for GET /records (see docs/DEVELOPMENT.md).
+  Edit this file, or upload a new one under a different name (POST
+  /templates/<name>, also from C via farsight_upload_template) and select
+  it with ?template=<name> in the URL — no need to touch farsight-server's
+  code, every file is re-read on every request.
+
+  Available variables:
+    .Filters    map[string]string of the filters passed in the URL
+                (?filter.<field>=<value>, one or more) — use
+                {{index .Filters "field"}}
+    .Records    slice of records matching all filters, each with:
+      .RecordID, .DeviceID
+      .Data     map[string]string of the record's fields — use
+                {{index .Data "fieldname"}}. If .Data.filename exists,
+                it's meant to be shown as an image (link to
+                /devices/<device>/files/<filename>, relative URL,
+                works standalone).
+
+  If this file is missing or not a valid template, farsight-server
+  automatically falls back to a minimal built-in template (no error for
+  the end user, just a log line on the server).
+*/}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.ico">
+<title>Farsight — Record</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem; background: #111; color: #eee; }
+  .record { border: 1px solid #333; border-radius: 6px; padding: 0.8rem; margin-bottom: 1rem; }
+  .record h3 { margin: 0 0 0.5rem 0; font-size: 0.95rem; color: #64b5f6; }
+  .record img { max-width: 350px; max-height: 350px; display: block; margin-bottom: 0.5rem; border-radius: 4px; }
+  table { border-collapse: collapse; }
+  td { padding: 0.15rem 0.6rem 0.15rem 0; font-size: 0.85rem; }
+  td.key { color: #888; }
+  .muted { color: #888; }
+</style>
+</head>
+<body>
+{{range .Records}}
+<div class="record">
+  <h3>{{.RecordID}}</h3>
+  {{if index .Data "filename"}}
+    <a href="/devices/{{.DeviceID}}/files/{{index .Data "filename"}}" target="_blank">
+      <img src="/devices/{{.DeviceID}}/files/{{index .Data "filename"}}" alt="{{.RecordID}}">
+    </a>
+  {{end}}
+  <table>
+  {{range $key, $value := .Data}}
+    {{if ne $key "filename"}}<tr><td class="key">{{$key}}</td><td>{{$value}}</td></tr>{{end}}
+  {{end}}
+  </table>
+</div>
+{{else}}
+<p class="muted">No records found for these filters.</p>
+{{end}}
+</body>
+</html>

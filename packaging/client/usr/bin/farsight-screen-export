@@ -1,0 +1,34 @@
+#!/bin/bash
+# Local on/off switch for remote desktop access, without uninstalling
+# anything — same idea as TeamViewer IoT's RemoteScreenChannels toggle.
+# Stops/starts x11vnc + the websockify/noVNC proxy; leaves farsight-agent
+# (telemetry, still useful even with the screen export off) and the
+# virtual display (farsight-xvfb, if in use) running.
+#
+# Remote (MQTT-triggered) toggling is a possible future addition, not
+# implemented — this is local-only, run by an operator on the machine.
+set -euo pipefail
+
+usage() {
+    echo "usage: $0 enable|disable|status" >&2
+    exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || { echo "farsight-screen-export: run as root (sudo)." >&2; exit 1; }
+
+case "${1:-}" in
+    enable)
+        systemctl enable --now farsight-x11vnc.service farsight-vnc-proxy.service
+        echo "farsight-screen-export: remote desktop enabled (survives reboot)."
+        ;;
+    disable)
+        systemctl disable --now farsight-vnc-proxy.service farsight-x11vnc.service
+        echo "farsight-screen-export: remote desktop disabled (survives reboot)."
+        ;;
+    status)
+        systemctl is-active farsight-x11vnc.service farsight-vnc-proxy.service || true
+        ;;
+    *)
+        usage
+        ;;
+esac

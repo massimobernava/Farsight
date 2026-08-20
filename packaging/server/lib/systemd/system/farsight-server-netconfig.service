@@ -1,0 +1,13 @@
+[Unit]
+Description=Farsight server network config (Tailscale-bound Mosquitto/Grafana/Telegraf)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Before=mosquitto.service telegraf.service grafana-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/farsight/server-netconfig.sh
+
+[Install]
+WantedBy=multi-user.target

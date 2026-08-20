@@ -1,0 +1,15 @@
+{
+  "stage": "Batch process phase, integer: 1 = initial heating, 5 = active phase (valve open), 8 = cooldown/end of batch. Not a physical measurement, a state.",
+  "valve_open": "Binary state (0/1) of the dosing valve: open or closed. Doesn't indicate how much current/voltage it's drawing, only the logical state — to check for an electrical fault look at valve_current/valve_voltage, not this field.",
+  "valve_current": "Electrical current measured on the dosing valve's coil, in Amperes. During a normal opening (phase 5) it typically stays between 0.8 and 1.0A. A value well above that range (e.g. >1.5A) during ANY phase, especially with the valve closed or during cooldown (phase 8), indicates a possible electrical/mechanical valve fault, not a normal condition.",
+  "valve_voltage": "Voltage across the valve's coil, in Volts. Normal during opening: 4.6-4.8V. Abnormal values carry the same meaning as valve_current.",
+  "flow_sensor": "Flow sensor reading, dimensionless in this sample dataset — always 0 in the sample data, not meaningful for this batch.",
+  "heater_on": "Binary state (0/1) of the heater: on during phase 1 (initial heating), off in other phases. Expected behavior, not an anomaly.",
+  "heater_current": "Current drawn by the heater, in Amperes — always 0 in the sample data (the heater in this dataset has no active dedicated current sensor).",
+  "power_density": "Process power density, arbitrary unit. Around 11 during the active phases (1 and 5), drops to 0 during cooldown (phase 8) — expected behavior.",
+  "pump_a": "Binary state (0/1) of the primary pump: active during phases 1 and 5, off during cooldown (phase 8) — expected behavior.",
+  "pump_b": "Binary state (0/1) of the secondary pump: always active in this dataset, regardless of phase — expected behavior, not an anomaly.",
+  "temperature": "Process temperature, in Celsius. Near zero during phase 1, rises to 90-200°C during the active phase (5), returns near zero during cooldown (phase 8). An elevated value (>10°C) during phase 8, outside expected behavior, can indicate a problem.",
+  "concentration": "Product concentration, arbitrary unit — always 0 in the sample data, not meaningful for this batch.",
+  "efficiency": "Process efficiency, dimensionless (0-1) — always 0 in the sample data, not meaningful for this batch (the real yield indicator here is yield_score in the batch's record, not this telemetry metric)."
+}

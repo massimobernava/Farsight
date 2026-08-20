@@ -1,0 +1,114 @@
+# /etc/farsight/server.conf
+# Config file for farsight-server. Shipped as a debian conffile: local edits
+# survive package upgrades.
+
+# --- farsight-server (control plane dashboard) ---
+# MQTT broker to subscribe to. Runs on the same host as Mosquitto, so the
+# loopback address is normally correct — the broker itself is the thing
+# bound to the Tailscale interface, not this client connection.
+MQTT_BROKER=tcp://127.0.0.1:1883
+
+# HTTP port for the dashboard (bound only on the Tailscale interface).
+HTTP_PORT=8080
+
+# Must match the client's WEBSOCKIFY_PORT (see /etc/farsight/client.conf on
+# clients) — used to build each device's noVNC link.
+WEBSOCKIFY_PORT=6080
+
+# Optional SSH username hint shown next to each device's IP. Leave empty to
+# just show the bare Tailscale IP.
+SSH_USER=
+
+# "tailscale" (default) binds the dashboard to this machine's Tailscale IP,
+# never 0.0.0.0. "loopback" is only for local debugging without a tailnet.
+BIND_INTERFACE=tailscale
+
+# Comma-separated Tailscale logins (emails) that see/manage every tenant —
+# no login page, no password: farsight-server identifies whoever's making
+# a request via `tailscale whois` on the connection's source address (only
+# tailnet members can reach this port at all, and tailscaled itself is the
+# one authority on who that is). Anyone not listed here only sees devices
+# belonging to a tenant they're a member of (see docs/MULTI-TENANCY.md).
+# Leave empty and every request is treated as a non-admin, tenant-less
+# viewer — not "nobody can use it," just "nobody sees anything yet" until
+# you add yourself here or as a tenant member.
+ADMIN_TAILSCALE_LOGINS=
+
+# Grafana's own admin API, used to provision a Grafana Organization (plus
+# datasources and a home dashboard) automatically whenever a tenant is
+# created — see docs/MULTI-TENANCY.md Tappa 3a. Provisioning failures are
+# logged, not fatal — a tenant still gets created either way.
+#
+# Leave GRAFANA_URL empty (default) to use Grafana's real loopback
+# address (127.0.0.1:3001, matching GRAFANA_INTERNAL_URL below) — this
+# must stay the internal address, NOT farsight-grafana-proxy's
+# Tailscale-facing one (port 3000): that proxy identifies every caller
+# via `tailscale whois` and Grafana honors that identity ahead of the
+# Basic Auth credentials below, so provisioning calls routed through it
+# would silently authenticate as whoever farsight-server's own Tailscale
+# identity resolves to instead of this admin account.
+GRAFANA_URL=
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=admin
+
+# Where postinst wrote the InfluxDB token it generated — read back here to
+# set up each new tenant's Grafana Org with a working InfluxDB datasource.
+INFLUX_TOKEN_FILE=/etc/farsight/influx_token
+
+# --- farsight-grafana-proxy ---
+# Grafana itself is loopback-only (see postinst) — this is what actually
+# sits on the Tailscale interface at the port Grafana used to have,
+# identifying each caller via `tailscale whois` the same way
+# farsight-server does, no password (docs/MULTI-TENANCY.md "Opzione B").
+# GRAFANA_INTERNAL_URL must match the http_addr/http_port postinst set in
+# grafana.ini.
+GRAFANA_INTERNAL_URL=http://127.0.0.1:3001
+GRAFANA_PROXY_PORT=3000
+GRAFANA_PROXY_HEADER=X-WEBAUTH-USER
+
+# SQLite database for persisted device identity (display name, notes) —
+# Grafana's SQLite datasource plugin reads the same file directly.
+SQLITE_PATH=/var/lib/farsight/farsight.db
+
+# Where files uploaded by clients (POST /devices/<device>/upload) get
+# saved, under <device>/.
+UPLOAD_DIR=/var/lib/farsight/uploads
+
+# After saving an upload, farsight-server looks for an executable named
+# after the file's extension (no dot) in this directory and runs it with
+# (file-path, device_id) — e.g. IMPORTERS_DIR/dat for a .dat
+# file. Nothing is installed here by default: farsight-server ships no
+# format-specific parsers, this is purely an extension point. See
+# docs/DEVELOPMENT.md and examples/ for a sample importer.
+IMPORTERS_DIR=/etc/farsight/importers
+
+# Templates for GET /records?filter.<field>=<value>&template=<name>
+# (shows records matching one or more filters — images, per-treatment
+# data, ...). <name>.html.tmpl in this directory; "default" is used when
+# ?template= is omitted. Edit a file, or push a new one with POST
+# /templates/<name> (from C: farsight_upload_template) — re-read on every
+# request, no farsight-server restart needed either way. Falls back to a
+# built-in default if a requested template is missing or invalid.
+TEMPLATES_DIR=/etc/farsight/templates
+
+# --- Tailscale ACL sync (docs/MULTI-TENANCY.md Tappa 3b) ---
+# Optional: leave both empty (default) to skip this entirely — tenant
+# creation/membership still works, it just doesn't touch network-level
+# access. Create an OAuth client at https://login.tailscale.com/admin/settings/oauth
+# with exactly one permission: "Policy File" (read + write) — nothing
+# else (no device tagging, no auth keys; this reads/writes the ACL by
+# referencing tenant devices' Tailscale IPs directly, not tags, on
+# purpose — see internal/tailscaleapi).
+TAILSCALE_OAUTH_CLIENT_ID=
+TAILSCALE_OAUTH_CLIENT_SECRET=
+# "-" (default) means "the tailnet this OAuth client belongs to" — the
+# normal case for a single-tailnet deployment. Only change this if
+# managing a different tailnet than the one this server itself is on.
+TAILSCALE_TAILNET=-
+
+# --- LLM chat ---
+# No config here at all — the provider URL (Ollama/OpenRouter/any
+# OpenAI-compatible endpoint), its API key, the model string, the system
+# prompt, and per-metric descriptions are all configured on the
+# /llm-settings admin page instead: live, no restart, one single place.
+# A fresh install just has the feature off until an admin fills that page in.

@@ -1,0 +1,141 @@
+#!/bin/bash
+# Optional helper: installs and configures Openbox on a virtual display
+# Farsight itself creates (see farsight-xvfb-wrapper) — never run
+# automatically, never a package dependency. Two profiles, same WM
+# underneath on purpose (see docs/DEVELOPMENT.md): a kiosk deployment
+# (one app, fullscreen, nothing else visible — Openbox is already close
+# to this with zero config) and a light general-purpose desktop (panel +
+# populated menu — the part Openbox needs help with out of the box).
+#
+# Also updates X11_SESSION_USER/X11_START_XTERM/X11_AUTOSTART_CMD in
+# client.conf itself and, if you say yes, restarts the VNC services —
+# which disconnects any current VNC session, on purpose: reconnect and
+# Openbox is there.
+set -euo pipefail
+
+CONF="${FARSIGHT_CLIENT_CONF:-/etc/farsight/client.conf}"
+
+usage() {
+    cat >&2 <<'EOF'
+usage:
+  farsight-setup-desktop kiosk <user> <command...>
+      Openbox autostarts <command>, nothing else visible (no panel, no
+      menu) — for a single dedicated app filling the whole screen.
+  farsight-setup-desktop desktop <user>
+      Openbox + a light panel (tint2) + a right-click menu (terminal,
+      file manager) — a usable general-purpose virtual desktop.
+
+Add --force to overwrite an existing autostart/menu.xml from a previous
+run (default: left alone if already present, so your own edits to them
+survive re-running this).
+EOF
+    exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || { echo "farsight-setup-desktop: run as root (sudo)." >&2; exit 1; }
+
+FORCE=false
+ARGS=()
+for a in "$@"; do
+    if [ "$a" = "--force" ]; then FORCE=true; else ARGS+=("$a"); fi
+done
+set -- "${ARGS[@]}"
+
+MODE="${1:-}"
+USER_NAME="${2:-}"
+[ -n "$MODE" ] && [ -n "$USER_NAME" ] || usage
+id "$USER_NAME" >/dev/null 2>&1 || { echo "farsight-setup-desktop: user '$USER_NAME' does not exist." >&2; exit 1; }
+
+HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+OB_DIR="$HOME_DIR/.config/openbox"
+mkdir -p "$OB_DIR"
+
+# Sets KEY="VALUE" in client.conf: replaces an existing (commented or
+# not) line for KEY, or appends one if there's none — client.conf ships
+# in different states across versions (some fields may not exist yet in
+# an older install's conffile), so "just sed the existing line" isn't
+# always enough.
+set_conf_var() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "$CONF" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CONF"
+    elif grep -q "^#${key}=" "$CONF" 2>/dev/null; then
+        sed -i "s|^#${key}=.*|${key}=\"${value}\"|" "$CONF"
+    else
+        printf '%s="%s"\n' "$key" "$value" >> "$CONF"
+    fi
+}
+
+write_if_absent_or_forced() {
+    local path="$1"
+    if [ -f "$path" ] && [ "$FORCE" != true ]; then
+        echo "farsight-setup-desktop: $path already exists, leaving it alone (use --force to overwrite)."
+        return 1
+    fi
+    return 0
+}
+
+case "$MODE" in
+kiosk)
+    shift 2
+    [ $# -ge 1 ] || usage
+    APP_CMD="$*"
+
+    apt-get update -qq
+    apt-get install -y openbox
+
+    if write_if_absent_or_forced "$OB_DIR/autostart"; then
+        printf '%s &\n' "$APP_CMD" > "$OB_DIR/autostart"
+    fi
+    [ -f "$OB_DIR/rc.xml" ] || cp /etc/xdg/openbox/rc.xml "$OB_DIR/rc.xml"
+    chown -R "$USER_NAME:$USER_NAME" "$OB_DIR"
+
+    echo "farsight-setup-desktop: kiosk profile ready for $USER_NAME."
+    ;;
+desktop)
+    apt-get update -qq
+    apt-get install -y openbox tint2 xterm
+    apt-get install -y pcmanfm || echo "farsight-setup-desktop: pcmanfm not available, menu's file manager entry won't work." >&2
+
+    if write_if_absent_or_forced "$OB_DIR/autostart"; then
+        printf 'tint2 &\n' > "$OB_DIR/autostart"
+    fi
+    [ -f "$OB_DIR/rc.xml" ] || cp /etc/xdg/openbox/rc.xml "$OB_DIR/rc.xml"
+    if write_if_absent_or_forced "$OB_DIR/menu.xml"; then
+        cat > "$OB_DIR/menu.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="Farsight">
+    <item label="Terminale"><action name="Execute"><command>xterm</command></action></item>
+    <item label="File manager"><action name="Execute"><command>pcmanfm</command></action></item>
+    <separator/>
+    <item label="Riavvia Openbox"><action name="Restart"/></item>
+  </menu>
+</openbox_menu>
+EOF
+    fi
+    chown -R "$USER_NAME:$USER_NAME" "$OB_DIR"
+
+    echo "farsight-setup-desktop: desktop profile ready for $USER_NAME."
+    ;;
+*)
+    usage
+    ;;
+esac
+
+set_conf_var X11_SESSION_USER "$USER_NAME"
+set_conf_var X11_START_XTERM "false"
+set_conf_var X11_AUTOSTART_CMD "openbox"
+echo "farsight-setup-desktop: $CONF updated (X11_SESSION_USER, X11_START_XTERM, X11_AUTOSTART_CMD)."
+
+if [ -t 0 ]; then
+    read -r -p "Restart the VNC services now? This disconnects any current VNC session. [y/N] " ANSWER
+    if [ "$ANSWER" = "y" ] || [ "$ANSWER" = "Y" ]; then
+        systemctl restart farsight-xvfb farsight-x11vnc farsight-vnc-proxy
+        echo "farsight-setup-desktop: restarted. Reconnect and Openbox will be there."
+    else
+        echo "farsight-setup-desktop: not restarted — run 'systemctl restart farsight-xvfb farsight-x11vnc farsight-vnc-proxy' when ready."
+    fi
+else
+    echo "farsight-setup-desktop: no terminal to ask from — run 'systemctl restart farsight-xvfb farsight-x11vnc farsight-vnc-proxy' when ready."
+fi

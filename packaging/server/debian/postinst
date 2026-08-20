@@ -1,0 +1,272 @@
+#!/bin/bash
+# postinst for farsight-server. Only configures — installing Mosquitto,
+# Telegraf, InfluxDB2 and Grafana is apt's job (see debian/control
+# Depends:), which leaves an already-installed one alone rather than
+# reconfiguring it from scratch, same "detect, don't clobber" principle as
+# the client package's Tailscale handling. Idempotent: safe to reinstall.
+set -e
+
+CONF=/etc/farsight/server.conf
+
+echo "farsight-server: postinst"
+
+# Mosquitto, Telegraf, InfluxDB2 and Grafana are apt Depends: (see
+# debian/control) — apt already installed them (or left them alone if
+# already present) as part of this same transaction, before this script
+# ran. Calling apt-get from here ourselves would deadlock: dpkg already
+# holds the frontend lock for the whole transaction that's running this
+# script. install.sh is what adds the InfluxData/Grafana apt repos those
+# Depends: need, before apt ever sees this package.
+
+# --- Grafana SQLite datasource plugin (reads the same device-identity DB
+# farsight-server writes to, see /var/lib/farsight/farsight.db below) ---
+if [ ! -d /var/lib/grafana/plugins/frser-sqlite-datasource ]; then
+    echo "farsight-server: installing Grafana SQLite datasource plugin..."
+    grafana cli --homepath /usr/share/grafana --config /etc/grafana/grafana.ini \
+        plugins install frser-sqlite-datasource || \
+        echo "farsight-server: SQLite datasource plugin install failed, SQLite panels in Grafana won't work until fixed manually." >&2
+else
+    echo "farsight-server: Grafana SQLite datasource plugin already installed."
+fi
+
+# --- Farsight's own LLM chat panel plugin — shipped inside this package
+# (built at packaging time, see build.sh), not fetched from Grafana's
+# plugin catalog, so unlike the two plugins above this one is *always*
+# refreshed on install/upgrade rather than left alone once present: it's
+# part of this package's own version, not a separate thing an admin
+# configures independently. Frontend-only (see
+# grafana-plugin/llm-assistant-app — dropped its Go backend once it
+# became clear farsight-server itself could run the chat loop in-process,
+# no plugin backend needed at all), so there's no executable/signature
+# concern beyond the "unsigned app plugin" one below. ---
+rm -rf /var/lib/grafana/plugins/farsight-llmassistant-app
+mkdir -p /var/lib/grafana/plugins/farsight-llmassistant-app
+cp -r /usr/share/farsight/grafana-plugins/farsight-llmassistant-app/. /var/lib/grafana/plugins/farsight-llmassistant-app/
+chown -R grafana:grafana /var/lib/grafana/plugins/farsight-llmassistant-app
+
+# --- Grafana refuses unsigned plugins by default — Farsight's own plugin
+# above is never going to be submitted to Grafana's plugin catalog for
+# signing (it's not a general-purpose plugin, it only makes sense paired
+# with this exact farsight-server), so this is the permanent, expected
+# state, not a temporary workaround. Scoped to exactly this one plugin ID,
+# not a blanket "allow anything unsigned." ---
+if grep -q '^allow_loading_unsigned_plugins.*farsight-llmassistant-app' /etc/grafana/grafana.ini; then
+    : # already there, idempotent no-op
+elif grep -q '^;allow_loading_unsigned_plugins' /etc/grafana/grafana.ini; then
+    sed -i 's/^;allow_loading_unsigned_plugins.*/allow_loading_unsigned_plugins = farsight-llmassistant-app/' /etc/grafana/grafana.ini
+elif grep -q '^allow_loading_unsigned_plugins' /etc/grafana/grafana.ini; then
+    sed -i '/^allow_loading_unsigned_plugins/ s/$/,farsight-llmassistant-app/' /etc/grafana/grafana.ini
+else
+    printf '\n[plugins]\nallow_loading_unsigned_plugins = farsight-llmassistant-app\n' >> /etc/grafana/grafana.ini
+fi
+
+# --- InfluxDB: bind loopback-only (only Grafana/Telegraf on this same host
+# need it, never a remote peer, so this doesn't need the Tailscale IP) ---
+INFLUX_NEEDS_RESTART=false
+if ! grep -q '^http-bind-address' /etc/influxdb/config.toml 2>/dev/null; then
+    echo 'http-bind-address = "127.0.0.1:8086"' >> /etc/influxdb/config.toml
+    INFLUX_NEEDS_RESTART=true
+fi
+systemctl enable influxdb >/dev/null 2>&1 || true
+if systemctl is-active --quiet influxdb; then
+    [ "$INFLUX_NEEDS_RESTART" = true ] && systemctl restart influxdb
+else
+    systemctl start influxdb || true
+fi
+
+# --- InfluxDB one-time setup (org/bucket/token), idempotent ---
+for i in 1 2 3 4 5; do
+    influx ping >/dev/null 2>&1 && break
+    sleep 1
+done
+
+TOKEN_FILE=/etc/farsight/influx_token
+mkdir -p /etc/farsight
+if [ ! -s "$TOKEN_FILE" ]; then
+    if ! influx org list >/dev/null 2>&1; then
+        echo "farsight-server: running initial InfluxDB setup..."
+        PW=$(head -c24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')
+        influx setup --username admin --password "$PW" --org farsight --bucket telemetry --force \
+            > /tmp/farsight-influx-setup.log 2>&1 || \
+            echo "farsight-server: influx setup failed, see /tmp/farsight-influx-setup.log" >&2
+    fi
+    TOKEN=$(grep -o 'token = "[^"]*"' /root/.influxdbv2/configs 2>/dev/null | head -1 | sed 's/token = "//;s/"$//')
+    if [ -n "$TOKEN" ]; then
+        # Subshell: scopes umask 077 to this file write only. A bare `umask
+        # 077` here would leak into the rest of the script and silently
+        # make every file it writes afterwards (e.g. Grafana's datasource
+        # provisioning file below) root-only — unreadable by the grafana
+        # user, breaking Grafana startup.
+        (umask 077; printf '%s' "$TOKEN" > "$TOKEN_FILE")
+    else
+        echo "farsight-server: could not read InfluxDB token, Telegraf output will fail until $TOKEN_FILE is fixed manually." >&2
+    fi
+fi
+TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || true)
+
+# --- Allow raw HTML/iframe in Grafana Text panels — needed to embed
+# farsight-server's own admin page (rename form) as a Grafana panel
+# instead of a separate page the user has to navigate to on their own. ---
+if grep -q '^;disable_sanitize_html' /etc/grafana/grafana.ini; then
+    sed -i 's/^;disable_sanitize_html.*/disable_sanitize_html = true/' /etc/grafana/grafana.ini
+elif ! grep -q '^disable_sanitize_html' /etc/grafana/grafana.ini; then
+    printf '\n[panels]\ndisable_sanitize_html = true\n' >> /etc/grafana/grafana.ini
+fi
+
+# --- Grafana itself: loopback-only, never the Tailscale IP — the only
+# thing allowed to reach it is farsight-grafana-proxy, running on this
+# same host (see docs/MULTI-TENANCY.md "Opzione B"). Static, one-time:
+# unlike the Tailscale IP, 127.0.0.1 never changes, so this belongs here
+# and not in server-netconfig.sh's boot-time regeneration. ---
+if grep -q '^http_addr' /etc/grafana/grafana.ini; then
+    sed -i 's/^http_addr.*/http_addr = 127.0.0.1/' /etc/grafana/grafana.ini
+elif grep -q '^;http_addr' /etc/grafana/grafana.ini; then
+    sed -i 's/^;http_addr.*/http_addr = 127.0.0.1/' /etc/grafana/grafana.ini
+else
+    printf '\nhttp_addr = 127.0.0.1\n' >> /etc/grafana/grafana.ini
+fi
+if grep -q '^http_port' /etc/grafana/grafana.ini; then
+    sed -i 's/^http_port.*/http_port = 3001/' /etc/grafana/grafana.ini
+elif grep -q '^;http_port' /etc/grafana/grafana.ini; then
+    sed -i 's/^;http_port.*/http_port = 3001/' /etc/grafana/grafana.ini
+else
+    printf '\nhttp_port = 3001\n' >> /etc/grafana/grafana.ini
+fi
+
+# --- Grafana auth.proxy: trusts the login already resolved (via
+# `tailscale whois`) and injected as a header by farsight-grafana-proxy —
+# no Grafana password, ever, for a tenant member. `whitelist` restricts
+# this trust to requests actually coming from loopback (the proxy) —
+# belt-and-suspenders on top of Grafana only listening there in the first
+# place. auto_sign_up is deliberately false: an account only exists for
+# someone farsight-server explicitly provisioned (see POST
+# /tenants/{tenant}/members), not for anyone who happens to reach the
+# proxy — same tenant-membership gate as the rest of the system.
+#
+# Grafana ships its own [auth.proxy] section by default (present but
+# fully commented out) — a plain "does this section exist" check matches
+# that placeholder and never actually applies anything. Every other auth
+# provider section in the default grafana.ini has its own similarly named
+# commented keys (enabled, auto_sign_up, ...), so a blind ungrafana.ini-
+# wide sed risks touching the wrong section too — this finds
+# [auth.proxy]'s own line range first and stays inside it. ---
+AUTH_PROXY_LINE=$(grep -n '^\[auth\.proxy\]' /etc/grafana/grafana.ini | head -1 | cut -d: -f1)
+if [ -n "$AUTH_PROXY_LINE" ]; then
+    NEXT_SECTION_OFFSET=$(tail -n "+$((AUTH_PROXY_LINE + 1))" /etc/grafana/grafana.ini | grep -n '^\[' | head -1 | cut -d: -f1)
+    if [ -n "$NEXT_SECTION_OFFSET" ]; then
+        AUTH_PROXY_END=$((AUTH_PROXY_LINE + NEXT_SECTION_OFFSET - 1))
+    else
+        AUTH_PROXY_END='$'
+    fi
+    RANGE="${AUTH_PROXY_LINE},${AUTH_PROXY_END}"
+    sed -i "${RANGE} s/^;\?enabled.*/enabled = true/" /etc/grafana/grafana.ini
+    sed -i "${RANGE} s/^;\?header_name.*/header_name = X-WEBAUTH-USER/" /etc/grafana/grafana.ini
+    sed -i "${RANGE} s/^;\?header_property.*/header_property = username/" /etc/grafana/grafana.ini
+    sed -i "${RANGE} s/^;\?auto_sign_up.*/auto_sign_up = false/" /etc/grafana/grafana.ini
+    sed -i "${RANGE} s/^;\?whitelist.*/whitelist = 127.0.0.1/" /etc/grafana/grafana.ini
+else
+    cat >> /etc/grafana/grafana.ini <<'EOF'
+
+[auth.proxy]
+enabled = true
+header_name = X-WEBAUTH-USER
+header_property = username
+auto_sign_up = false
+whitelist = 127.0.0.1
+EOF
+fi
+
+# --- "Farsight - Sistema" (device list) dashboard: provisioned from a file
+# (rendered with this machine's Tailscale IP by server-netconfig.sh at
+# every boot, see there) and set as the org's home dashboard, so a fresh
+# install shows "are my machines online" the moment someone logs into
+# Grafana — not an empty instance they have to go build a dashboard in
+# themselves first. ---
+mkdir -p /etc/grafana/provisioning/dashboards /etc/grafana/dashboards
+cat > /etc/grafana/provisioning/dashboards/farsight.yaml <<'EOF'
+apiVersion: 1
+providers:
+  - name: Farsight
+    folder: ""
+    type: file
+    options:
+      path: /etc/grafana/dashboards
+EOF
+
+HOME_DASH_LINE='default_home_dashboard_path = /etc/grafana/dashboards/farsight-sistema.json'
+if grep -q '^default_home_dashboard_path' /etc/grafana/grafana.ini; then
+    sed -i "s#^default_home_dashboard_path.*#${HOME_DASH_LINE}#" /etc/grafana/grafana.ini
+elif grep -q '^;default_home_dashboard_path' /etc/grafana/grafana.ini; then
+    sed -i "s#^;default_home_dashboard_path.*#${HOME_DASH_LINE}#" /etc/grafana/grafana.ini
+elif grep -q '^\[dashboards\]' /etc/grafana/grafana.ini; then
+    sed -i "/^\[dashboards\]/a ${HOME_DASH_LINE}" /etc/grafana/grafana.ini
+else
+    printf '\n[dashboards]\n%s\n' "$HOME_DASH_LINE" >> /etc/grafana/grafana.ini
+fi
+
+# --- farsight-server's own device-identity database. Created by
+# farsight-server itself on first start (see internal/store); the
+# directory just needs to exist first, and needs to end up readable by the
+# grafana user for the SQLite datasource plugin to query it directly. ---
+mkdir -p /var/lib/farsight /var/lib/farsight/uploads
+
+# --- Extension point for file-upload importers (see UPLOAD_DIR/
+# IMPORTERS_DIR in server.conf) — empty by default, nothing shipped here.
+# An admin drops in an executable named after a file extension to handle
+# it; see examples/ in the repo for a sample (deliberately not installed
+# by this package — proprietary/site-specific formats don't belong in the
+# base product). ---
+mkdir -p /etc/farsight/importers
+
+# --- Grafana datasources: provisioned from a file, not the API — a real
+# install has no admin sitting at the Grafana UI to click through this, and
+# file provisioning is idempotent by name (re-running this just updates the
+# same two datasources in place). ---
+mkdir -p /etc/grafana/provisioning/datasources
+cat > /etc/grafana/provisioning/datasources/farsight.yaml <<EOF
+apiVersion: 1
+datasources:
+  - name: InfluxDB-Farsight
+    type: influxdb
+    access: proxy
+    url: http://127.0.0.1:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: farsight
+      defaultBucket: telemetry
+    secureJsonData:
+      token: ${TOKEN}
+  - name: SQLite-Farsight
+    type: frser-sqlite-datasource
+    access: proxy
+    jsonData:
+      path: /var/lib/farsight/farsight.db
+EOF
+
+# --- systemd: netconfig oneshot first, then the services that depend on it ---
+systemctl daemon-reload
+systemctl enable --now farsight-server-netconfig.service || \
+    echo "farsight-server: netconfig failed (no Tailscale IP yet?), run 'systemctl restart farsight-server-netconfig' once the machine has joined the tailnet." >&2
+
+for unit in mosquitto telegraf grafana-server farsight-server farsight-grafana-proxy; do
+    systemctl enable "$unit" >/dev/null 2>&1 || true
+    if systemctl is-active --quiet "$unit"; then
+        systemctl restart "$unit" || echo "farsight-server: failed to restart $unit, check 'journalctl -u $unit'." >&2
+    else
+        systemctl start "$unit" || echo "farsight-server: failed to start $unit, check 'journalctl -u $unit'." >&2
+    fi
+done
+
+# farsight-server creates the SQLite file itself on first start (as root);
+# make it readable by the grafana user so its SQLite datasource plugin can
+# query it too. Give it a moment to actually exist first.
+for i in 1 2 3 4 5; do
+    [ -f /var/lib/farsight/farsight.db ] && break
+    sleep 1
+done
+chmod 644 /var/lib/farsight/farsight.db 2>/dev/null || true
+
+echo "farsight-server: install complete. Edit ${CONF} if needed. Dashboard and Grafana listen on this machine's Tailscale IP."
+
+exit 0

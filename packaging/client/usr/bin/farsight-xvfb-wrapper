@@ -1,0 +1,99 @@
+#!/bin/bash
+# Starts a virtual X11 display (Xvfb) for x11vnc to attach to, but only if
+# X11_DISPLAY doesn't already have a real X server on it — a machine with
+# an actual logged-in desktop (dev machines, some real deployments) must
+# never get a second, competing X server on the same display number. If one
+# is already there, this becomes a harmless no-op that just stays "active"
+# so systemd doesn't restart-loop it.
+#
+# Kept separate from any window manager on purpose: what runs inside the
+# virtual display (Openbox, LabVIEW, nothing at all) is the operator's
+# choice, not something Farsight installs or manages — X11_START_XTERM /
+# X11_AUTOSTART_CMD in client.conf decide what's running when someone
+# first connects, and X11_SESSION_USER decides which user it runs as
+# (default: root).
+set -euo pipefail
+
+# shellcheck source=/etc/farsight/client.conf
+source /etc/farsight/client.conf
+
+DISPLAY_VAL="${X11_DISPLAY:-:0}"
+DISPLAY_NUM="${DISPLAY_VAL#:}"
+SOCK="/tmp/.X11-unix/X${DISPLAY_NUM}"
+LOCK="/tmp/.X${DISPLAY_NUM}-lock"
+
+# A socket file existing isn't proof anything is actually listening on
+# it — an Xvfb killed hard (systemd stop under load, OOM, ...) can leave
+# both the socket and the X lock file behind without cleaning up after
+# itself. X servers also write /tmp/.X<N>-lock with their own PID; that's
+# what actually tells a stale leftover apart from a live one. Found on a
+# real machine: a restart left exactly this behind, x11vnc then failed to
+# connect to a socket nothing was serving.
+if [ -e "$SOCK" ]; then
+    if [ -f "$LOCK" ] && kill -0 "$(tr -dc '0-9' <"$LOCK")" 2>/dev/null; then
+        echo "farsight-xvfb-wrapper: ${DISPLAY_VAL} already has an X server running, nothing to do."
+        exec sleep infinity
+    fi
+    echo "farsight-xvfb-wrapper: ${DISPLAY_VAL} has a stale socket/lock (no live process behind it), cleaning up."
+    rm -f "$SOCK" "$LOCK"
+fi
+
+# Root by default (matches this service's own User=root), but GUI apps
+# often refuse to run as root at all, and things like D-Bus/the home
+# directory expect a real user — X11_SESSION_USER runs Xvfb and whatever
+# X11_SESSION_CMD launches as that user instead. x11vnc/websockify stay
+# root regardless: they just connect to the display's unix socket, and
+# Xvfb here never uses -auth, so nothing restricts who can attach to it.
+X11_RUN_AS=()
+if [ -n "${X11_SESSION_USER:-}" ]; then
+    X11_RUN_AS=(runuser -u "$X11_SESSION_USER" --)
+fi
+
+"${X11_RUN_AS[@]}" /usr/bin/Xvfb "$DISPLAY_VAL" -screen 0 "${XVFB_RESOLUTION:-1920x1080x24}" -nolisten tcp &
+XVFB_PID=$!
+
+for _ in $(seq 1 20); do
+    [ -e "$SOCK" ] && break
+    sleep 0.5
+done
+
+# No window manager means no moving windows afterwards — this only gets
+# one shot at a reasonable position. -geometry's +X+Y anchors the
+# window's top-left corner, not its center, so this deliberately
+# overestimates the character cell size (real xterm default font is
+# smaller) — that pulls the offset left/up, closer to actually centering
+# the whole window instead of just its top-left corner. Not exact, just
+# closer than dead center-of-corner.
+RES="${XVFB_RESOLUTION:-1920x1080x24}"
+SCREEN_W="${RES%%x*}"
+SCREEN_H="$(echo "$RES" | cut -d x -f2)"
+COLS=100
+ROWS=30
+OFFSET_X=$(( (SCREEN_W - COLS * 10) / 2 ))
+OFFSET_Y=$(( (SCREEN_H - ROWS * 20) / 2 ))
+[ "$OFFSET_X" -lt 0 ] && OFFSET_X=0
+[ "$OFFSET_Y" -lt 0 ] && OFFSET_Y=0
+
+# `runuser` alone gives a bare shell, no D-Bus session bus — fine for
+# xterm itself, but plenty of real GUI apps (Firefox included: confirmed
+# on a real machine, started then died with a dbus error, then refused to
+# start again) need one and just crash without it, silently once there's
+# no window manager around to show why. dbus-run-session starts a fresh
+# session bus and exports DBUS_SESSION_BUS_ADDRESS for whatever runs
+# inside it — belt-and-suspenders even for X11_START_XTERM, since apps
+# launched by hand from that terminal need the same thing.
+DBUS_WRAP=(dbus-run-session --)
+
+# Welcome xterm: on by default, so a first connection to a blank virtual
+# display shows a working terminal instead of nothing. X11_AUTOSTART_CMD
+# is independent of it — set one, the other, both, or neither.
+if [ "${X11_START_XTERM:-true}" = "true" ]; then
+    "${X11_RUN_AS[@]}" "${DBUS_WRAP[@]}" env DISPLAY="$DISPLAY_VAL" \
+        xterm -geometry "${COLS}x${ROWS}+${OFFSET_X}+${OFFSET_Y}" -e /usr/lib/farsight/x11-welcome.sh &
+fi
+
+if [ -n "${X11_AUTOSTART_CMD:-}" ]; then
+    "${X11_RUN_AS[@]}" "${DBUS_WRAP[@]}" env DISPLAY="$DISPLAY_VAL" $X11_AUTOSTART_CMD &
+fi
+
+wait "$XVFB_PID"

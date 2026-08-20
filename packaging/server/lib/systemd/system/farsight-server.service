@@ -1,0 +1,14 @@
+[Unit]
+Description=Farsight control plane dashboard
+After=network-online.target tailscaled.service mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/farsight-server
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
