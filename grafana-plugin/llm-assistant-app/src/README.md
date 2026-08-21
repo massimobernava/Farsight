@@ -1,50 +1,46 @@
-<!-- This README file is going to be the one displayed on the Grafana.com website for your plugin. Uncomment and replace the content here before publishing.
+# Farsight LLM Assistant
 
-Remove any remaining comments before publishing as these may be displayed on Grafana.com -->
+Ask questions about your fleet's devices, telemetry, and records, in plain language — answered by
+an LLM with real read access to your tenant's data (device status, historical metrics, records),
+never data outside it.
 
-# Llm-Assistant
+## Overview
 
-<!-- To help maximize the impact of your README and improve usability for users, we propose the following loose structure:
+This plugin adds a **Chat** page to Grafana: pick a tenant (if you belong to more than one),
+type a question, get an answer grounded in real data — the assistant calls into
+`farsight-server`'s own tools (list devices, fetch telemetry summaries/series, search records,
+read a device's files, generate a downloadable report) to answer, and cites what it used. Past
+conversations are kept per-login (private, not shared across a tenant) in a sidebar, each
+deletable.
 
-**BEFORE YOU BEGIN**
-- Ensure all links are absolute URLs so that they will work when the README is displayed within Grafana and Grafana.com
-- Be inspired ✨
-  - [grafana-polystat-panel](https://github.com/grafana/grafana-polystat-panel)
-  - [volkovlabs-variable-panel](https://github.com/volkovlabs/volkovlabs-variable-panel)
-
-**ADD SOME BADGES**
-
-Badges convey useful information at a glance for users whether in the Catalog or viewing the source code. You can use the generator on [Shields.io](https://shields.io/badges/dynamic-json-badge) together with the Grafana.com API
-to create dynamic badges that update automatically when you publish a new version to the marketplace.
-
-- For the URL parameter use `https://grafana.com/api/plugins/your-plugin-id`.
-- Example queries:
-  - Downloads: `$.downloads`
-  - Catalog Version: `$.version`
-  - Grafana Dependency: `$.grafanaDependency`
-  - Signature Type: `$.versionSignatureType`
-- Optionally, for the logo parameter use `grafana`.
-
-Full example: ![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?logo=grafana&query=$.version&url=https://grafana.com/api/plugins/grafana-polystat-panel&label=Marketplace&prefix=v&color=F47A20)
-
-Consider other [badges](https://shields.io/badges) as you feel appropriate for your project.
-
-## Overview / Introduction
-Provide one or more paragraphs as an introduction to your plugin to help users understand why they should use it.
-
-Consider including screenshots:
-- in [plugin.json](https://grafana.com/developers/plugin-tools/reference/plugin-json#info) include them as relative links.
-- in the README ensure they are absolute URLs.
+Works with any OpenAI-compatible provider — a local Ollama model for a fully on-prem setup with
+nothing leaving your network, or a hosted provider like OpenRouter when you'd rather not run one
+yourself. That choice, along with the model string, API key, system prompt, and per-metric
+descriptions (what each telemetry field means and what's normal, so the assistant doesn't have to
+guess from the field name alone), is configured on farsight-server's own `/llm-settings` admin
+page — not in this plugin.
 
 ## Requirements
-List any requirements or dependencies they may need to run the plugin.
 
-## Getting Started
-Provide a quick start on how to configure and use the plugin.
+- A running `farsight-server` (part of the [Farsight](https://github.com/massimobernava/Farsight)
+  platform) reachable from the browser over Tailscale.
+- An LLM provider configured on that server's `/llm-settings` page — the chat page shows a clear
+  message instead of a chat box if none is configured yet.
+
+## Getting started
+
+1. Install and enable this plugin (done automatically by `farsight-server`'s own package install
+   — see the main project's README).
+2. Open the **Configuration** page (admin only) and set the Farsight server's Tailscale URL.
+3. Open **Chat**, pick a tenant, ask something.
 
 ## Documentation
-If your project has dedicated documentation available for users, provide links here. For help in following Grafana's style recommendations for technical documentation, refer to our [Writer's Toolkit](https://grafana.com/docs/writers-toolkit/).
+
+Full setup, architecture, and the rest of the Farsight platform:
+[github.com/massimobernava/Farsight](https://github.com/massimobernava/Farsight).
 
 ## Contributing
-Do you want folks to contribute to the plugin or provide feedback through specific means? If so, tell them how!
--->
+
+Issues and pull requests are welcome on the main
+[Farsight repository](https://github.com/massimobernava/Farsight/issues) — this plugin isn't
+maintained as a separate project.

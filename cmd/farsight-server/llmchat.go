@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -463,6 +464,12 @@ func runChatTurn(ctx context.Context, deps llmChatDeps, cfg llmConfig, tenantID,
 			return "", fmt.Errorf("llm: %w", err)
 		}
 		if len(resp.Choices) == 0 {
+			// Observed for real (OpenRouter/Haiku, twice in a row during
+			// testing, both times resolved by a plain retry) with no way to
+			// tell after the fact whether it's genuine provider-side
+			// flakiness or a real pattern worth investigating further —
+			// this is the only place that distinction could ever be made.
+			log.Printf("llm: empty choices from provider (model=%q, iteration=%d)", cfg.model, i)
 			return "", fmt.Errorf("llm: empty response")
 		}
 		msg := resp.Choices[0].Message
