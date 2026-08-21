@@ -62,7 +62,31 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// Two real, external sources of concurrent access to this same file:
+	// farsight-server's own goroutines (MQTT-driven writes racing HTTP-driven
+	// reads/writes) and Grafana's SQLite datasource plugin, which reads this
+	// file directly, in its own process, entirely outside our control.
+	// SQLite's default rollback-journal mode blocks a writer against any
+	// concurrent reader and vice versa, with no wait — a losing side gets
+	// "database is locked (5) (SQLITE_BUSY)" immediately (observed for real
+	// on zeus: intermittent EnsureDevice/IsAdmin failures, hours apart).
+	// WAL mode lets readers and one writer proceed without blocking each
+	// other; busy_timeout covers the remaining writer-vs-writer case by
+	// waiting briefly and retrying at the SQLite level instead of erroring
+	// out on the first contended millisecond.
+	//
+	// Both are passed as DSN _pragma params (modernc.org/sqlite-specific),
+	// not as a PRAGMA db.Exec() after opening — database/sql pools multiple
+	// underlying connections, and a PRAGMA executed once only takes effect
+	// on whichever single connection happened to run it. journal_mode=WAL
+	// is persisted in the database file itself so that part would've stuck
+	// regardless, but busy_timeout is a per-connection runtime setting: any
+	// later connection the pool opens fresh would silently get the SQLite
+	// default (0 — fail immediately) instead. Caught by
+	// TestConcurrentWrites actually deadlocking under load with the
+	// db.Exec() version of this fix, before it ever reached zeus.
+	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}

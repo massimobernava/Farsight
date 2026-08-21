@@ -121,7 +121,7 @@ int farsight_publish_record(farsight_client *client,
  * with that filename plus a field linking it back to whatever it belongs
  * to (a treatment's record_id, ...) — farsight-server has no built-in
  * concept of "this file belongs to that record," records are how you
- * build that link yourself. See examples/ophthalmic-tid-import/.
+ * build that link yourself. See examples/generic-file-import/.
  *
  * farsight-server only stores the file; whether anything happens to it
  * next (parsing, pushing data back in via MQTT) depends on whether an
@@ -143,7 +143,7 @@ int farsight_upload_file(farsight_client *client,
  * uploads. This is how a page's *look* gets configured without ever
  * touching the server's filesystem directly: push a template from here,
  * point a Grafana panel's iframe at ?template=<name>, done — see
- * docs/DEVELOPMENT.md and examples/ophthalmic-tid-import/.
+ * docs/DEVELOPMENT.md and examples/generic-file-import/.
  *
  * Returns 0 on success (HTTP 2xx), -1 on transport failure, or the HTTP
  * status code on a non-2xx response. */
@@ -151,6 +151,29 @@ int farsight_upload_template(farsight_client *client,
                               int http_port,
                               const char *name,
                               const char *file_path);
+
+/* Locally enables/disables the remote-desktop stack (x11vnc + the
+ * websockify/noVNC proxy) on THIS machine — the same
+ * `systemctl enable/disable --now` toggle the farsight-screen-export CLI
+ * script does (see packaging/client/usr/bin/farsight-screen-export),
+ * exposed as a function call so a program embedding libfarsight (e.g. a
+ * LabVIEW-side C integration) doesn't have to shell out to a script
+ * itself. Unlike every other function here, this doesn't talk to the
+ * network at all — client is only used to confirm you have a real
+ * connected client (a NULL check), not for anything network-side. Local
+ * only: remote (MQTT-triggered) toggling from the dashboard is a
+ * separate, not-yet-built feature — see GitHub issue #1.
+ *
+ * enable: nonzero to turn remote desktop on, 0 to turn it off.
+ *
+ * Needs root (or an equivalent sudoers/polkit exception) — systemctl
+ * enable/disable of a system unit requires it, same as running the shell
+ * script directly; not solved here, just inherited as-is.
+ *
+ * Returns 0 on success, -1 if client is NULL, or systemctl's own exit
+ * status on failure (typically 1 when not running with adequate
+ * privilege). */
+int farsight_set_screen_export(farsight_client *client, int enable);
 
 /* Publishes status=offline, disconnects, and frees the client. Safe to
  * call with NULL. */

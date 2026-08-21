@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -320,6 +321,23 @@ int farsight_upload_template(farsight_client *c, int http_port,
     snprintf(url, sizeof(url), "http://%s:%d/templates/%s", c->server_host, http_port, name);
 
     return http_post_file(url, file_path, NULL, 0);
+}
+
+int farsight_set_screen_export(farsight_client *c, int enable) {
+    if (!c) return -1;
+
+    /* Same unit order as farsight-screen-export itself: start the proxy
+     * after x11vnc is already up, stop the proxy before x11vnc goes down
+     * (the proxy sits in front of it). Not reinventing the toggle, just
+     * calling the same systemctl invocation the shell script does. */
+    const char *cmd = enable
+        ? "systemctl enable --now farsight-x11vnc.service farsight-vnc-proxy.service"
+        : "systemctl disable --now farsight-vnc-proxy.service farsight-x11vnc.service";
+
+    int rc = system(cmd);
+    if (rc == -1) return -1;
+    if (WIFEXITED(rc)) return WEXITSTATUS(rc);
+    return rc;
 }
 
 void farsight_disconnect(farsight_client *c) {

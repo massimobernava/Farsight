@@ -14,6 +14,8 @@
 set -euo pipefail
 
 CONF="${FARSIGHT_CLIENT_CONF:-/etc/farsight/client.conf}"
+# shellcheck source=/etc/farsight/client.conf
+[ -f "$CONF" ] && source "$CONF"
 
 usage() {
     cat >&2 <<'EOF'
@@ -24,12 +26,42 @@ usage:
   farsight-setup-desktop desktop <user>
       Openbox + a light panel (tint2) + a right-click menu (terminal,
       file manager) — a usable general-purpose virtual desktop.
+  farsight-setup-desktop add-menu-item <user> <label> <command...>
+      Adds one entry to an existing desktop-profile menu.xml (above
+      "Restart Openbox", which always stays last) and live-reloads
+      Openbox — no VNC reconnect needed. Requires the desktop profile to
+      already be set up (menu.xml must exist).
+  farsight-setup-desktop remove-menu-item <user> <label>
+      Removes the entry with the given label (exact match, including any
+      of the built-in ones) and live-reloads Openbox.
 
 Add --force to overwrite an existing autostart/menu.xml from a previous
 run (default: left alone if already present, so your own edits to them
 survive re-running this).
 EOF
     exit 1
+}
+
+# Escapes text for safe use inside an XML attribute value or text node —
+# add-menu-item's label/command are freeform strings from the caller, not
+# guaranteed XML-safe (a command with "&&" would otherwise corrupt
+# menu.xml). Order matters: & must go first, or the escapes generated for
+# the other characters would themselves get escaped.
+xml_escape() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
+}
+
+# Live-reloads Openbox's config (rc.xml/menu.xml) for USER_NAME without
+# restarting the VNC stack or disconnecting anything — the right tool for
+# a menu.xml edit specifically, unlike kiosk/desktop setup itself, which
+# needs a real restart (autostart only runs once, at session start).
+# Best-effort: if Openbox isn't currently running (no active VNC session
+# yet), this just fails quietly — the new/removed item is already saved
+# to disk and takes effect whenever the session does start.
+reconfigure_openbox() {
+    local user_name="$1"
+    su - "$user_name" -c "DISPLAY='${X11_DISPLAY:-:0}' openbox --reconfigure" >/dev/null 2>&1 || \
+        echo "farsight-setup-desktop: couldn't live-reload Openbox (not running yet?) — saved anyway, takes effect next session."
 }
 
 [ "$(id -u)" -eq 0 ] || { echo "farsight-setup-desktop: run as root (sudo)." >&2; exit 1; }
@@ -106,10 +138,10 @@ desktop)
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="root-menu" label="Farsight">
-    <item label="Terminale"><action name="Execute"><command>xterm</command></action></item>
+    <item label="Terminal"><action name="Execute"><command>xterm</command></action></item>
     <item label="File manager"><action name="Execute"><command>pcmanfm</command></action></item>
     <separator/>
-    <item label="Riavvia Openbox"><action name="Restart"/></item>
+    <item label="Restart Openbox"><action name="Restart"/></item>
   </menu>
 </openbox_menu>
 EOF
@@ -117,6 +149,47 @@ EOF
     chown -R "$USER_NAME:$USER_NAME" "$OB_DIR"
 
     echo "farsight-setup-desktop: desktop profile ready for $USER_NAME."
+    ;;
+add-menu-item)
+    shift 2
+    [ $# -ge 2 ] || usage
+    LABEL="$1"; shift
+    CMD="$*"
+
+    MENU="$OB_DIR/menu.xml"
+    [ -f "$MENU" ] || { echo "farsight-setup-desktop: $MENU doesn't exist yet — run the 'desktop' profile first." >&2; exit 1; }
+
+    ESCAPED_LABEL="$(xml_escape "$LABEL")"
+    ESCAPED_CMD="$(xml_escape "$CMD")"
+    ITEM="    <item label=\"${ESCAPED_LABEL}\"><action name=\"Execute\"><command>${ESCAPED_CMD}</command></action></item>"
+    # Insert above "<separator/>" so custom entries land between the
+    # built-in ones and Restart Openbox, which always stays last.
+    sed -i "\\|<separator/>|i\\${ITEM}" "$MENU"
+    chown "$USER_NAME:$USER_NAME" "$MENU"
+
+    reconfigure_openbox "$USER_NAME"
+    echo "farsight-setup-desktop: added \"$LABEL\" to $USER_NAME's menu."
+    exit 0
+    ;;
+remove-menu-item)
+    shift 2
+    [ $# -ge 1 ] || usage
+    LABEL="$1"
+
+    MENU="$OB_DIR/menu.xml"
+    [ -f "$MENU" ] || { echo "farsight-setup-desktop: $MENU doesn't exist yet — run the 'desktop' profile first." >&2; exit 1; }
+
+    ESCAPED_LABEL="$(xml_escape "$LABEL")"
+    if ! grep -qF "label=\"${ESCAPED_LABEL}\"" "$MENU"; then
+        echo "farsight-setup-desktop: no menu item labeled \"$LABEL\" found in $MENU." >&2
+        exit 1
+    fi
+    sed -i "\\|label=\"${ESCAPED_LABEL}\"|d" "$MENU"
+    chown "$USER_NAME:$USER_NAME" "$MENU"
+
+    reconfigure_openbox "$USER_NAME"
+    echo "farsight-setup-desktop: removed \"$LABEL\" from $USER_NAME's menu."
+    exit 0
     ;;
 *)
     usage
